@@ -1,0 +1,46 @@
+# --------------------
+# General
+# --------------------
+.git
+.gitignore
+*.log
+*.sqlite3
+*.db
+.DS_Store
+Thumbs.db
+
+# --------------------
+# Python (Backend)
+# --------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.env
+.env.*
+backend/.env
+backend/.env.*
+backend/venv/
+backend/.venv/
+backend/tests/
+
+# --------------------
+# Node.js (Frontend)
+# --------------------
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.*
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.vite/
+frontend/.next/
+frontend/.cache/
+
+# --------------------
+# Docker-related
+# --------------------
+Dockerfile*
+.dockerignore
