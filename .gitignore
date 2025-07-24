@@ -9,7 +9,6 @@ Thumbs.db
 
 # --- Secrets ---
 # Ignore all environment files except the example template
-# This is the most critical rule for security!
 .env
 .env.*
 !.env.example
@@ -26,15 +25,14 @@ frontend/.vite/
 frontend/npm-debug.log*
 frontend/yarn-error.log*
 
-
 # --- Backend (Python + FastAPI) ---
 # Ignore the virtual environment folder
 backend/venv/
 backend/.venv/
 
 # Ignore Python cache files
-backend/__pycache__/
-backend/*.pyc
+__pycache__/
+*.pyc
 
 # Ignore build artifacts for Python
 backend/build/
