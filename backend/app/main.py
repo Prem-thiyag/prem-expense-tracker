@@ -16,7 +16,7 @@ app = FastAPI(title="Personal Finance Tracker API")
 origins = [
     # This is the URL you will get AFTER you deploy your frontend to Vercel.
     # You MUST replace this placeholder with your real Vercel URL.
-    "https://your-frontend-app-name.vercel.app", 
+    "https://prem-expense-tracker.vercel.app", 
 
     # You can also add your local development URL for testing if needed.
     "http://localhost:5173",
