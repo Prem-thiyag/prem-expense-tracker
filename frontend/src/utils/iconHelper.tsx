@@ -3,11 +3,11 @@
 import React from 'react';
 // ✅ --- ADDING MANY NEW ICONS ---
 import { 
-    Utensils, ShoppingBag, Car, Ticket, Zap, Heart, BookOpen, Home, Plane, Building, 
+    Utensils, ShoppingBag, Car, Ticket, Zap, Heart, Home, Plane, Building, 
     Leaf, PawPrint, Package, HelpCircle, Briefcase, Gift, Landmark, 
-    PiggyBank, Wallet, Dumbbell, Shapes, Receipt, GraduationCap, Pizza,
+    PiggyBank, Dumbbell, Shapes, Receipt, GraduationCap, Pizza,
     Train, Bus, Clapperboard, Shirt, Gamepad2, Pill, Ambulance,
-    University, Laptop, Phone, Music, Sprout, Cat, Dog, Coffee
+    University, Laptop, Phone, Sprout, Cat, Dog, Coffee
 } from 'lucide-react';
 
 // --- The Massively Expanded Icon Map ---

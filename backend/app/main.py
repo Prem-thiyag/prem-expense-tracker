@@ -5,18 +5,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.api_router import api_router
 from dotenv import load_dotenv
 
-load_dotenv(".env.test")
-
-# The oauth2_scheme definition is NO LONGER HERE.
+# Load a standard .env file for consistency. Render will use its own environment variables.
+load_dotenv(".env")
 
 app = FastAPI(title="Personal Finance Tracker API")
 
+# ✅ --- THIS IS THE CRITICAL FIX ---
+# This list defines which frontend URLs are allowed to make requests to your API.
+# The "*" wildcard has been removed for security.
+origins = [
+    # This is the URL you will get AFTER you deploy your frontend to Vercel.
+    # You MUST replace this placeholder with your real Vercel URL.
+    "https://your-frontend-app-name.vercel.app", 
+
+    # You can also add your local development URL for testing if needed.
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins, # Use the specific list of allowed origins
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],    # Allows all standard methods (GET, POST, etc.)
+    allow_headers=["*"],    # Allows all standard headers
 )
 
 app.include_router(api_router, prefix="/api/v1")

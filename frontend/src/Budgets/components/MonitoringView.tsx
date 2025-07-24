@@ -96,7 +96,7 @@ const MonitoringView: React.FC<Props> = ({ data, pacingData, onEdit, onDelete, i
                     <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                             <Pie data={donutChartData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5}>
-                                {donutChartData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                                {donutChartData.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
                             </Pie>
                             <Tooltip formatter={(value: number) => formatCurrency(value)} />
                             <Legend />

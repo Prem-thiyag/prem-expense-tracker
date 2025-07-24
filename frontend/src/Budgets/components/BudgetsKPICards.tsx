@@ -1,7 +1,6 @@
 // File: src/Budgets/components/BudgetsKPICards.tsx
 
 import React from 'react';
-import { Lock, Unlock } from 'lucide-react'; // Assuming you might add this back later
 
 // Define the shape of the props this component expects
 interface BudgetsKPICardsProps {
