@@ -2,20 +2,45 @@
 
 import React from 'react';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { useNavigate } from 'react-router-dom'; // ✅ 1. Import useNavigate
+import { useNavigate } from 'react-router-dom';
 import { Download } from 'lucide-react';
 import type { TopCategory } from '../../types';
 
-// ✅ 2. Update props to accept the current month
 interface TopSpendCategoriesChartProps {
   data: TopCategory[];
   currentMonth: string;
 }
 
+// Your curated list of colors for the most common categories remains the same.
 const CATEGORY_COLORS: { [key: string]: string } = {
   'Food': '#10B981', 'Shopping': '#3B82F6', 'Travel': '#EF4444', 'Bills': '#64748B', 'Entertainment': '#8B5CF6',
   'Transportation': '#F97316', 'Healthcare': '#EC4899', 'Miscellaneous': '#F59E0B', 'Services': '#14B8A6',
   'Transfers': '#6366F1', 'default': '#A1A1AA',
+};
+
+// ✅ --- NEW HELPER FUNCTION 1 ---
+// This function takes a number (the category ID) and consistently generates a color.
+// Using HSL (Hue, Saturation, Lightness) is an effective way to create visually distinct colors.
+const generateHslColorForId = (id: number): string => {
+  // Use the category ID to generate a hue value between 0 and 360.
+  // Multiplying by a prime number like 37 helps distribute the colors more evenly.
+  const hue = (id * 37) % 360;
+  // We use fixed saturation and lightness to ensure all generated colors
+  // have a similar, pleasant tone that fits with the existing palette.
+  const saturation = 75;
+  const lightness = 45; // 45% is a good balance, not too dark or light.
+  return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+};
+
+// ✅ --- NEW HELPER FUNCTION 2 ---
+// This function decides whether to use a pre-defined color or generate a new one.
+const getCategoryColor = (category: TopCategory): string => {
+  // If the category's name is in our curated list, use that specific color.
+  if (CATEGORY_COLORS[category.category]) {
+    return CATEGORY_COLORS[category.category];
+  }
+  // Otherwise, generate a unique and persistent color based on its ID.
+  return generateHslColorForId(category.id);
 };
 
 const CustomLegend = (props: any) => {
@@ -33,11 +58,9 @@ const CustomLegend = (props: any) => {
 };
 
 const TopSpendCategoriesChart: React.FC<TopSpendCategoriesChartProps> = ({ data, currentMonth }) => {
-  const navigate = useNavigate(); // ✅ 3. Initialize the navigate function
+  const navigate = useNavigate();
 
-  // ✅ 4. Create the click handler
   const handlePieClick = (data: any) => {
-    // The clicked slice's data is in the payload property
     const { id: categoryId } = data.payload;
     if (categoryId) {
         navigate('/expenses', { 
@@ -59,7 +82,6 @@ const TopSpendCategoriesChart: React.FC<TopSpendCategoriesChartProps> = ({ data,
       <div className="flex-grow w-full h-full">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            {/* ✅ 5. Add the onClick handler to the Pie component */}
             <Pie 
               data={data} 
               cx="50%" 
@@ -70,10 +92,13 @@ const TopSpendCategoriesChart: React.FC<TopSpendCategoriesChartProps> = ({ data,
               dataKey="amount" 
               nameKey="category"
               onClick={handlePieClick}
-              className="cursor-pointer" // Add a pointer to indicate it's clickable
+              className="cursor-pointer"
             >
+              {/* ✅ --- THIS IS THE FINAL CHANGE --- */}
+              {/* Instead of using the old map directly, we now call our new helper function */}
+              {/* for each category to get the appropriate color. */}
               {data.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={CATEGORY_COLORS[entry.category] || CATEGORY_COLORS.default} />
+                <Cell key={`cell-${index}`} fill={getCategoryColor(entry)} />
               ))}
             </Pie>
             <Tooltip 
