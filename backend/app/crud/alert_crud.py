@@ -1,9 +1,13 @@
 # File: app/crud/alert_crud.py
 from sqlalchemy.orm import Session, joinedload
-from app.models.alert import Alert, Goal
 from app.schemas.alert_schema import AlertCreate
 from fastapi import HTTPException
 from datetime import datetime
+
+# ✅ THIS IS THE FIX: Import Alert and Goal from their correct, separate model files.
+from app.models.alert import Alert
+from app.models.goal import Goal
+
 
 def create_alert(db: Session, alert_in: dict, user_id: int):
     # This function is now specifically for BUDGET alerts
