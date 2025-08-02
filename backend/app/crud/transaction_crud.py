@@ -7,6 +7,7 @@ from app.models.transaction import Transaction
 from app.models.tag import Tag
 from app.models.account import Account
 from app.models.category import Category
+from app.models.transaction_tag import TransactionTag
 from app.schemas.transaction_schema import TransactionCreate, TransactionUpdate
 from app.services.alert_service import check_and_create_budget_alerts
 from app.crud import alert_crud
@@ -21,13 +22,11 @@ def _get_smart_category(db: Session, description: str, user_id: int):
     - Uses fuzzy matching and aliases.
     - Creates alerts for new, unrecognized categories.
     """
-    # Define shorthands and common misspellings
     CATEGORY_ALIASES = { "miscellaneous": ["misc", "miscelleaneous"], "entertainment": ["ent"], "transportation": ["transport"] }
     
     user_categories_db = db.query(Category).filter(Category.user_id == user_id).all()
     user_categories_map = {cat.id: cat.name for cat in user_categories_db}
 
-    # Create a reverse map for fuzzy matching: { "lowercase_name": id }
     choices = {}
     for cat_id, cat_name in user_categories_map.items():
         cat_name_lower = cat_name.lower()
@@ -36,21 +35,16 @@ def _get_smart_category(db: Session, description: str, user_id: int):
             for alias in CATEGORY_ALIASES[cat_name_lower]:
                 choices[alias] = cat_id
 
-    # 1. Try to find a user remark like /category/
     remark_match = re.search(r'/([^/]+)/', description, re.IGNORECASE)
     if remark_match:
         user_remark = remark_match.group(1).lower().strip()
-        
-        # 2. Find the best match with a confidence score
         best_match = fuzzy_process.extractOne(user_remark, choices.keys())
         
-        if best_match and best_match[1] >= 85: # 85% confidence threshold
-            return choices[best_match[0]] # Return the matched category ID
+        if best_match and best_match[1] >= 85:
+            return choices[best_match[0]]
         else:
-            # 3. If no good match, create an alert for the potential new category
             alert_crud.create_new_category_alert(db, user_id=user_id, category_name=user_remark.title())
             
-    # 4. If no remark was found or no match was made, return None
     return None
 
 
@@ -59,16 +53,13 @@ def create_transaction(db: Session, txn_in: TransactionCreate, user_id: int):
     if not account:
         raise HTTPException(status_code=404, detail="Account not found for the current user.")
 
-    # ✅ --- SMART CATEGORIZATION HOOK ---
     detected_category_id = txn_in.category_id
-    # If the user saved as "Uncategorized" (category_id is None), try to be smart.
     if not detected_category_id and txn_in.description:
         smart_id = _get_smart_category(db, txn_in.description, user_id)
         if smart_id:
             detected_category_id = smart_id
 
-    txn_dict = txn_in.model_dump(exclude={"tag_ids"})
-    # Use the detected_category_id, which will be the smart one if found, or None otherwise.
+    txn_dict = txn_in.model_dump(exclude={"tag_ids", "category_id"})
     txn = Transaction(**txn_dict, user_id=user_id, category_id=detected_category_id)
 
     if txn_in.tag_ids:
@@ -94,10 +85,8 @@ def update_transaction(db: Session, txn_id: int, txn_in: TransactionUpdate, user
 
     update_data = txn_in.model_dump(exclude_unset=True)
     
-    # ✅ --- SMART CATEGORIZATION HOOK (for updates) ---
-    # Check if the user is trying to set the category to "Uncategorized"
     if "category_id" in update_data and update_data["category_id"] is None:
-        description = update_data.get("description", txn.description) # Use new description if available
+        description = update_data.get("description", txn.description)
         smart_id = _get_smart_category(db, description, user_id)
         if smart_id:
             update_data["category_id"] = smart_id

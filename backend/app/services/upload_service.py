@@ -102,7 +102,7 @@ def parse_paytm_statement(file, account_map):
             print(f"Skipping Paytm row due to error: {e}")
     return transactions
 
-# --- SMART CATEGORIZATION LOGIC (No changes) ---
+# ✅ --- NEW HELPER LOGIC ---
 CATEGORY_ALIASES = { "miscellaneous": ["misc", "miscelleaneous"], "entertainment": ["ent"], "transportation": ["transport"] }
 
 def get_category_by_fuzzy_matching(remark: str, user_categories: dict) -> int | None:
@@ -112,14 +112,14 @@ def get_category_by_fuzzy_matching(remark: str, user_categories: dict) -> int | 
         cat_name_lower = cat_name.lower()
         choices[cat_name_lower] = cat_id
         if cat_name_lower in CATEGORY_ALIASES:
-            for alias in CATEGORY_ALIASES[cat_name_lower]: choices[alias] = cat_id
+            for alias in CATEGORY_ALIASES[cat_name_lower]:
+                choices[alias] = cat_id
     best_match = fuzzy_process.extractOne(remark, choices.keys())
-    if best_match and best_match[1] >= 85: return choices[best_match[0]]
+    if best_match and best_match[1] >= 85: # 85% confidence threshold
+        return choices[best_match[0]]
     return None
 
 def process_and_insert_transactions(db: Session, transactions: list, user_id: int) -> int:
-    # ✅ --- THIS IS THE FIX (Part 1) ---
-    # We no longer check for existing upi_ref because it is not a unique identifier.
     existing_unique_keys = {res[0] for res in db.query(Transaction.unique_key).filter(Transaction.user_id == user_id, Transaction.unique_key.isnot(None)).all()}
     
     merchants_map = {m.name: m.id for m in db.query(Merchant).filter(Merchant.user_id == user_id).all()}
@@ -130,14 +130,13 @@ def process_and_insert_transactions(db: Session, transactions: list, user_id: in
     newly_found_categories = set()
 
     for txn_data in sorted(transactions, key=lambda x: x['txn_date']):
-        # ✅ --- THIS IS THE FIX (Part 2) ---
-        # The duplicate check now ONLY relies on the more robust unique_key.
         if (txn_data.get('unique_key') and txn_data['unique_key'] in existing_unique_keys):
             continue
             
         detected_merchant_id, detected_category_id = None, None
         desc = txn_data['description']
         
+        # ✅ --- NEW: Smart categorization from user remarks ---
         remark_match = re.search(r'/([^/]+)/', desc, re.IGNORECASE)
         if remark_match:
             user_remark = remark_match.group(1)
@@ -147,6 +146,7 @@ def process_and_insert_transactions(db: Session, transactions: list, user_id: in
             else:
                 newly_found_categories.add(user_remark.strip().title())
 
+        # ✅ --- MODIFIED: Fallback logic if remark parsing fails ---
         if not detected_category_id:
             desc_lower = desc.lower()
             if any(keyword in desc_lower for keyword in TRANSFER_KEYWORDS):
@@ -160,6 +160,7 @@ def process_and_insert_transactions(db: Session, transactions: list, user_id: in
                         if cat_id: detected_category_id = cat_id
                         if detected_merchant_id or detected_category_id: break
         
+        # ✅ --- MODIFIED: Default to Miscellaneous if all else fails ---
         if not detected_category_id:
             misc_cat_id = next((_id for _id, name in user_categories_map.items() if name.lower() == 'miscellaneous'), None)
             if misc_cat_id: detected_category_id = misc_cat_id
@@ -169,12 +170,13 @@ def process_and_insert_transactions(db: Session, transactions: list, user_id: in
         db.add(txn)
         inserted_count += 1
         
-        # We only need to add the new unique_key to our set for the current batch.
         if txn_data.get('unique_key'): existing_unique_keys.add(txn_data['unique_key'])
 
+    # ✅ --- NEW: Create alerts after processing all transactions ---
     for cat_name in newly_found_categories:
         alert_crud.create_new_category_alert(db, user_id=user_id, category_name=cat_name)
 
+    # ✅ --- MODIFIED: Commit if new transactions OR new categories were found ---
     if inserted_count > 0 or newly_found_categories:
         db.commit()
 

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { NavLink, Link, useNavigate } from "react-router-dom";
-import { Bell, UserCircle, Clock, CheckCircle, PlusCircle, X } from "lucide-react"; // ✅ Import X icon
+import { Bell, UserCircle, Clock, CheckCircle, PlusCircle, X } from "lucide-react";
 import logo from "../assets/logo.png";
 import { logout, getUnreadAlerts, acknowledgeAlert } from "../api/apiClient";
 import type { Alert } from "../types";
@@ -119,11 +119,13 @@ const Navbar: React.FC = () => {
             <p className="text-sm">New category found: <strong>{alert.context.category_name}</strong></p>
             <p className="text-xs text-gray-400 mt-1">{dayjs(alert.triggered_at).fromNow()}</p>
           </div>
-          {/* ✅ NEW: Container for the two action buttons */}
+          {/* ✅ --- THIS IS THE FIX --- */}
           <div className="flex items-center gap-1 flex-shrink-0">
+            {/* "Ignore" button */}
             <button onClick={() => handleAcknowledgeAlert(alert.id)} title="Ignore" className="p-1 text-gray-400 hover:text-red-600">
               <X size={18} />
             </button>
+            {/* "Add" button */}
             <button onClick={() => handleNewCategoryAlertClick(alert)} title="Add this category" className="p-1 text-gray-400 hover:text-green-600">
               <PlusCircle size={18} />
             </button>
