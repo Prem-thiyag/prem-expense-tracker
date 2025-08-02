@@ -176,10 +176,17 @@ export interface User {
 
 export interface Alert {
   id: number;
-  threshold_percentage: number;
-  triggered_at: string; // ISO date string
+  threshold_percentage: number | null; // Can be null for new alerts
+  triggered_at: string; 
   is_acknowledged: boolean;
-  goal: {
+  
+  // ✅ NEW FIELDS
+  type: 'budget' | 'new_category';
+  context: {
+    category_name?: string; // Will exist for 'new_category' type
+  } | null;
+
+  goal: { // Can be null for new alerts
     id: number;
     month: string;
     limit_amount: number;
@@ -187,5 +194,5 @@ export interface Alert {
       id: number;
       name: string;
     }
-  };
+  } | null;
 }

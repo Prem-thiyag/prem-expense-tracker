@@ -1,14 +1,13 @@
 // File: src/Settings/Settings.tsx
 
 import React, { useState, useEffect } from 'react';
-// ✅ Import all necessary API functions, including the new deleteMyAccount
 import { getCategories, deleteCategory, getTags, getAccounts, deleteTag, deleteAccount, deleteMyAccount } from '../api/apiClient';
 import type { Category, Tag, Account } from '../types';
 import { availableIcons } from '../utils/iconHelper';
 import toast from 'react-hot-toast';
-import { useNavigate } from 'react-router-dom';
+// ✅ NEW: Import useLocation
+import { useNavigate, useLocation } from 'react-router-dom';
 
-// Import all components
 import SettingsHeader from './components/SettingsHeader';
 import CategorySettingsCard from './components/CategorySettingsCard';
 import TagsCard from './components/TagsCard';
@@ -27,8 +26,9 @@ const Settings: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  // ✅ NEW: Get the location object to read navigation state
+  const location = useLocation();
 
-  // --- Modal States ---
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [categoryToEdit, setCategoryToEdit] = useState<Category | null>(null);
   const [isTagModalOpen, setIsTagModalOpen] = useState(false);
@@ -38,6 +38,8 @@ const Settings: React.FC = () => {
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<{ id: number; type: 'category' | 'tag' | 'account' } | null>(null);
   const [isConfirmDeleteAccountModalOpen, setIsConfirmDeleteAccountModalOpen] = useState(false);
+  // ✅ NEW: State to hold the pre-filled name from an alert click
+  const [prefilledCategoryName, setPrefilledCategoryName] = useState<string | null>(null);
 
   const fetchData = async () => {
     try {
@@ -57,11 +59,24 @@ const Settings: React.FC = () => {
 
   useEffect(() => { fetchData(); }, []);
 
-  // --- Handlers ---
+  // ✅ NEW: useEffect to check for and handle the navigation state
+  useEffect(() => {
+    if (location.state?.newCategoryName) {
+      // Set the name to be passed to the modal
+      setPrefilledCategoryName(location.state.newCategoryName);
+      // Open the 'add new' category modal
+      handleAddNewCategory();
+      // Clear the state to prevent re-triggering on refresh
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state]);
+
+
   const handleAddNewCategory = () => { setCategoryToEdit(null); setIsCategoryModalOpen(true); };
-  const handleEditCategory = (category: Category) => { setCategoryToEdit(category); setIsCategoryModalOpen(true); };
+  const handleEditCategory = (category: Category) => { setCategoryToEdit(category); setPrefilledCategoryName(null); setIsCategoryModalOpen(true); };
   const handleDeleteCategory = (id: number) => { setItemToDelete({ id, type: 'category' }); setIsConfirmModalOpen(true); };
-  const handleSaveCategory = () => { fetchData(); };
+  // ✅ NEW: Clear the prefilled name on save
+  const handleSaveCategory = () => { setPrefilledCategoryName(null); fetchData(); };
 
   const handleAddNewTag = () => { setTagToEdit(null); setIsTagModalOpen(true); };
   const handleEditTag = (tag: Tag) => { setTagToEdit(tag); setIsTagModalOpen(true); };
@@ -73,7 +88,6 @@ const Settings: React.FC = () => {
   const handleDeleteAccount = (id: number) => { setItemToDelete({ id, type: 'account' }); setIsConfirmModalOpen(true); };
   const handleSaveAccount = () => { fetchData(); };
 
-  // --- Delete Logic ---
   const handleConfirmDelete = async () => {
     if (!itemToDelete) return;
     const toastId = toast.loading(`Deleting ${itemToDelete.type}...`);
@@ -96,7 +110,7 @@ const Settings: React.FC = () => {
     try {
       await deleteMyAccount({ password });
       toast.success("Account deleted successfully. Logging you out.", { id: toastId, duration: 4000 });
-      localStorage.removeItem('accessToken');
+      sessionStorage.removeItem('accessToken');
       setTimeout(() => navigate('/login', { replace: true }), 1000);
     } catch (err: any) {
       toast.error(err.response?.data?.detail || "Failed to delete account. Incorrect password?", { id: toastId });
@@ -113,7 +127,6 @@ const Settings: React.FC = () => {
     usedIcons.delete(categoryToEdit.icon_name);
   }
   
-  // ✅ --- FIX #1 & #2: Corrected variable name and added type annotation ---
   const iconsForPicker = availableIcons.filter((icon: string) => 
     !usedIcons.has(icon) || 
     (categoryToEdit && icon === categoryToEdit.icon_name)
@@ -141,7 +154,16 @@ const Settings: React.FC = () => {
         </div>
       </div>
 
-      <CategoryModal isOpen={isCategoryModalOpen} onClose={() => setIsCategoryModalOpen(false)} onSave={handleSaveCategory} categoryToEdit={categoryToEdit} availableIcons={iconsForPicker} />
+      {/* ✅ NEW: Pass the initialName prop and clear the prefilled name on close */}
+      <CategoryModal 
+        isOpen={isCategoryModalOpen} 
+        onClose={() => { setIsCategoryModalOpen(false); setPrefilledCategoryName(null); }} 
+        onSave={handleSaveCategory} 
+        categoryToEdit={categoryToEdit} 
+        availableIcons={iconsForPicker}
+        initialName={prefilledCategoryName} 
+      />
+
       <TagModal isOpen={isTagModalOpen} onClose={() => setIsTagModalOpen(false)} onSave={handleSaveTag} tagToEdit={tagToEdit} />
       <AccountModal isOpen={isAccountModalOpen} onClose={() => setIsAccountModalOpen(false)} onSave={handleSaveAccount} accountToEdit={accountToEdit} />
       <ConfirmModal isOpen={isConfirmModalOpen} onClose={() => setIsConfirmModalOpen(false)} onConfirm={handleConfirmDelete} title={`Delete ${itemToDelete?.type}`} message={`Are you sure? This cannot be undone.`} />

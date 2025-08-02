@@ -1,8 +1,10 @@
 // File: src/components/Navbar.tsx
 
 import React, { useState, useEffect, useRef } from "react";
-import { NavLink, Link } from "react-router-dom";
-import { Bell, UserCircle, Clock, CheckCircle } from "lucide-react";
+// ✅ NEW: Import useNavigate
+import { NavLink, Link, useNavigate } from "react-router-dom";
+// ✅ NEW: Import PlusCircle icon
+import { Bell, UserCircle, Clock, CheckCircle, PlusCircle } from "lucide-react";
 import logo from "../assets/logo.png";
 import { logout, getUnreadAlerts, acknowledgeAlert } from "../api/apiClient";
 import type { Alert } from "../types";
@@ -21,6 +23,8 @@ const Navbar: React.FC = () => {
   
   const menuRef = useRef<HTMLDivElement>(null);
   const alertsRef = useRef<HTMLDivElement>(null);
+  // ✅ NEW: Initialize the navigate function
+  const navigate = useNavigate();
 
   const unreadCount = alerts.length;
 
@@ -36,7 +40,6 @@ const Navbar: React.FC = () => {
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      // ✅ Fix #1: Corrected the typo from your previous error log.
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setIsUserMenuOpen(false);
       }
@@ -48,7 +51,6 @@ const Navbar: React.FC = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Effect for the session timer
   useEffect(() => {
     const updateTimer = () => {
       const token = sessionStorage.getItem('accessToken');
@@ -79,7 +81,6 @@ const Navbar: React.FC = () => {
     return () => clearInterval(intervalId);
   }, []);
 
-  // Effect to fetch notifications
   useEffect(() => {
     const fetchAlerts = async () => {
       try {
@@ -102,6 +103,54 @@ const Navbar: React.FC = () => {
     } catch (error) {
       console.error("Failed to acknowledge alert:", error);
     }
+  };
+
+  // ✅ NEW: Handler for clicking a 'new_category' alert
+  const handleNewCategoryAlertClick = (alert: Alert) => {
+    if (alert.context?.category_name) {
+      // Navigate to settings and pass the name in state
+      navigate('/settings', { state: { newCategoryName: alert.context.category_name } });
+      setIsAlertsOpen(false); // Close the dropdown
+      handleAcknowledgeAlert(alert.id); // Dismiss the alert
+    }
+  };
+
+  // ✅ NEW: A render function to handle different alert types
+  const renderAlertContent = (alert: Alert) => {
+    if (alert.type === 'new_category' && alert.context?.category_name) {
+      return (
+        <div key={alert.id} className="p-3 border-b hover:bg-gray-50 flex items-start gap-3">
+          <div className="w-1.5 h-1.5 mt-1.5 bg-purple-500 rounded-full flex-shrink-0"></div>
+          <div className="flex-grow">
+            <p className="text-sm">New category found: <strong>{alert.context.category_name}</strong></p>
+            <p className="text-xs text-gray-400 mt-1">{dayjs(alert.triggered_at).fromNow()}</p>
+          </div>
+          <button onClick={() => handleNewCategoryAlertClick(alert)} title="Add this category" className="p-1 text-gray-400 hover:text-green-600 flex-shrink-0">
+            <PlusCircle size={18} />
+          </button>
+        </div>
+      );
+    }
+
+    if (alert.type === 'budget' && alert.goal) {
+      return (
+        <div key={alert.id} className="p-3 border-b hover:bg-gray-50 flex items-start gap-3">
+          <div className="w-1.5 h-1.5 mt-1.5 bg-blue-500 rounded-full flex-shrink-0"></div>
+          <div className="flex-grow">
+            <p className="text-sm">
+              You've used {alert.threshold_percentage}% of your <strong>{alert.goal?.category?.name || 'a'}</strong> budget for {dayjs(alert.goal?.month + "-01").format("MMMM")}.
+            </p>
+            <p className="text-xs text-gray-400 mt-1">{dayjs(alert.triggered_at).fromNow()}</p>
+          </div>
+          <button onClick={() => handleAcknowledgeAlert(alert.id)} title="Mark as read" className="p-1 text-gray-400 hover:text-green-600 flex-shrink-0">
+            <CheckCircle size={18} />
+          </button>
+        </div>
+      );
+    }
+    
+    // Fallback for any unknown alert types
+    return null;
   };
 
   return (
@@ -140,25 +189,8 @@ const Navbar: React.FC = () => {
             <div className="absolute right-0 mt-2 w-80 bg-white text-gray-800 rounded shadow-lg z-50 max-h-96 overflow-y-auto">
               <div className="p-3 font-bold border-b">Notifications</div>
               {alerts.length > 0 ? (
-                alerts.map(alert => (
-                  <div key={alert.id} className="p-3 border-b hover:bg-gray-50 flex items-start gap-3">
-                    <div className="w-1.5 h-1.5 mt-1.5 bg-blue-500 rounded-full flex-shrink-0"></div>
-                    <div className="flex-grow">
-                      <p className="text-sm">
-                        {/* ✅ Fix #2: Use optional chaining (?.) to prevent crashes if `goal` or `category` is not present. */}
-                        You've used {alert.threshold_percentage}% of your <strong>{alert.goal?.category?.name || 'a'}</strong> budget for {dayjs(alert.goal?.month + "-01").format("MMMM")}.
-                      </p>
-                      <p className="text-xs text-gray-400 mt-1">{dayjs(alert.triggered_at).fromNow()}</p>
-                    </div>
-                    <button 
-                      onClick={() => handleAcknowledgeAlert(alert.id)}
-                      title="Mark as read"
-                      className="p-1 text-gray-400 hover:text-green-600 flex-shrink-0"
-                    >
-                      <CheckCircle size={18} />
-                    </button>
-                  </div>
-                ))
+                // ✅ NEW: Use the render function instead of direct mapping
+                alerts.map(alert => renderAlertContent(alert))
               ) : (
                 <p className="p-4 text-sm text-center text-gray-500">You're all caught up!</p>
               )}

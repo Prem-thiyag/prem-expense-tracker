@@ -4,13 +4,16 @@ import json
 import re
 from sqlalchemy.orm import Session
 from datetime import datetime
+from thefuzz import process as fuzzy_process
+
 from app.models.transaction import Transaction
 from app.models.account import Account
 from app.models.category import Category
 from app.models.merchant import Merchant
 from app.models.tag import Tag
+from app.crud import alert_crud
 
-# --- DATA MAPPING RULES (No changes here, they are universal) ---
+# --- DATA MAPPING RULES (No changes from your original) ---
 TRANSFER_KEYWORDS = {
     'v revathi', 't prem', 'satish p', 'mohan kumar a', 'putte gowda', 'naveen b', 'madhu c s', 'perumal p',
     'saroja', 'c vamsi krishna', 'vivek kumar', 'pavan k', 'kiran kumar k', 'manjunath', 'sagar', 'm anand',
@@ -39,6 +42,7 @@ MERCHANT_CATEGORY_RULES = {
     'nova gamin': ('Nova Gaming', 'Entertainment'), 'financewithsharan': ('FinanceWithSharan', 'Education'),
 }
 
+# --- PARSING FUNCTIONS (No changes from your original) ---
 def parse_generic_statement(file, account_id, source, date_col, desc_col, debit_col, credit_col, ref_col=None, unique_id_col=None):
     try:
         df = pd.read_csv(file.file)
@@ -98,52 +102,80 @@ def parse_paytm_statement(file, account_map):
             print(f"Skipping Paytm row due to error: {e}")
     return transactions
 
+
+# --- NEW SMART CATEGORIZATION LOGIC ---
+CATEGORY_ALIASES = { "miscellaneous": ["misc", "miscelleaneous"], "entertainment": ["ent"], "transportation": ["transport"] }
+
+def get_category_by_fuzzy_matching(remark: str, user_categories: dict) -> int | None:
+    remark = remark.lower().strip()
+    choices = {}
+    for cat_id, cat_name in user_categories.items():
+        cat_name_lower = cat_name.lower()
+        choices[cat_name_lower] = cat_id
+        if cat_name_lower in CATEGORY_ALIASES:
+            for alias in CATEGORY_ALIASES[cat_name_lower]: choices[alias] = cat_id
+    best_match = fuzzy_process.extractOne(remark, choices.keys())
+    if best_match and best_match[1] >= 85: return choices[best_match[0]]
+    return None
+
 def process_and_insert_transactions(db: Session, transactions: list, user_id: int) -> int:
     existing_upi_refs = {res[0] for res in db.query(Transaction.upi_ref).filter(Transaction.user_id == user_id, Transaction.upi_ref.isnot(None)).all()}
     existing_unique_keys = {res[0] for res in db.query(Transaction.unique_key).filter(Transaction.user_id == user_id, Transaction.unique_key.isnot(None)).all()}
     
     merchants_map = {m.name: m.id for m in db.query(Merchant).filter(Merchant.user_id == user_id).all()}
-    categories_map = {c.name: c.id for c in db.query(Category).filter(Category.user_id == user_id).all()}
+    user_categories_db = db.query(Category).filter(Category.user_id == user_id).all()
+    user_categories_map = {cat.id: cat.name for cat in user_categories_db}
     
     inserted_count = 0
+    newly_found_categories = set()
+
     for txn_data in sorted(transactions, key=lambda x: x['txn_date']):
         if (txn_data.get('upi_ref') and str(txn_data['upi_ref']) in existing_upi_refs) or \
            (txn_data.get('unique_key') and txn_data['unique_key'] in existing_unique_keys):
             continue
             
-        detected_merchant_id, detected_category_id = None, categories_map.get('Miscellaneous')
-        desc_lower = txn_data['description'].lower()
-        if any(keyword in desc_lower for keyword in TRANSFER_KEYWORDS):
-            detected_category_id = categories_map.get('Transfers')
-        else:
-            for keyword, (merchant_name, category_name) in MERCHANT_CATEGORY_RULES.items():
-                if keyword in desc_lower:
-                    detected_merchant_id = merchants_map.get(merchant_name)
-                    detected_category_id = categories_map.get(category_name)
-                    if detected_merchant_id or detected_category_id: break
-
-        # ✅ --- THIS IS THE FIX ---
-        # 1. Pop the 'raw_data' string from the dictionary. This removes it so it won't cause a conflict.
-        raw_data_json_str = txn_data.pop('raw_data', '{}')
+        detected_merchant_id, detected_category_id = None, None
+        desc = txn_data['description']
         
-        # 2. Now, create the Transaction object. `**txn_data` no longer contains 'raw_data'.
-        #    We pass the parsed JSON as a separate, explicit argument.
-        txn = Transaction(
-            **txn_data,
-            user_id=user_id,
-            category_id=detected_category_id, 
-            merchant_id=detected_merchant_id,
-            raw_data=json.loads(raw_data_json_str)
-        )
+        remark_match = re.search(r'/(.*?)/', desc, re.IGNORECASE)
+        if remark_match:
+            user_remark = remark_match.group(1)
+            matched_id = get_category_by_fuzzy_matching(user_remark, user_categories_map)
+            if matched_id:
+                detected_category_id = matched_id
+            else:
+                newly_found_categories.add(user_remark.strip().title())
+
+        if not detected_category_id:
+            desc_lower = desc.lower()
+            if any(keyword in desc_lower for keyword in TRANSFER_KEYWORDS):
+                transfer_cat_id = next((_id for _id, name in user_categories_map.items() if name.lower() == 'transfers'), None)
+                if transfer_cat_id: detected_category_id = transfer_cat_id
+            else:
+                for keyword, (merchant_name, category_name) in MERCHANT_CATEGORY_RULES.items():
+                    if keyword in desc_lower:
+                        detected_merchant_id = merchants_map.get(merchant_name)
+                        cat_id = next((_id for _id, name in user_categories_map.items() if name.lower() == category_name.lower()), None)
+                        if cat_id: detected_category_id = cat_id
+                        if detected_merchant_id or detected_category_id: break
+        
+        if not detected_category_id:
+            misc_cat_id = next((_id for _id, name in user_categories_map.items() if name.lower() == 'miscellaneous'), None)
+            if misc_cat_id: detected_category_id = misc_cat_id
+
+        raw_data_json_str = txn_data.pop('raw_data', '{}')
+        txn = Transaction(**txn_data, user_id=user_id, category_id=detected_category_id, merchant_id=detected_merchant_id, raw_data=json.loads(raw_data_json_str))
         db.add(txn)
         inserted_count += 1
         
         if txn_data.get('upi_ref'): existing_upi_refs.add(txn_data['upi_ref'])
         if txn_data.get('unique_key'): existing_unique_keys.add(txn_data['unique_key'])
 
-    if inserted_count > 0:
+    for cat_name in newly_found_categories:
+        alert_crud.create_new_category_alert(db, user_id=user_id, category_name=cat_name)
+
+    if inserted_count > 0 or newly_found_categories:
         db.commit()
-        print(f"✅ Committed {inserted_count} new transactions to the database for user {user_id}.")
-    else:
-        print(f"ℹ️ No new transactions found to insert for user {user_id}.")
+
+    print(f"✅ Committed {inserted_count} new transactions and found {len(newly_found_categories)} new categories for user {user_id}.")
     return inserted_count

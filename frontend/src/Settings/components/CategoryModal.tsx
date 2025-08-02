@@ -6,18 +6,18 @@ import IconPicker from './IconPicker';
 import { createCategory, updateCategory } from '../../api/apiClient';
 import type { Category } from '../../types';
 
-// ✅ --- FIX #1: Correct the prop name in the interface ---
 interface CategoryModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: () => void;
   categoryToEdit?: Category | null;
-  availableIcons: string[]; // Use 'availableIcons' to match what the parent provides
+  availableIcons: string[];
+  // ✅ NEW: Add the initialName prop to the interface
+  initialName?: string | null;
 }
 
-// ✅ --- FIX #2: Accept the correct prop name in the function signature ---
 const CategoryModal: React.FC<CategoryModalProps> = ({ 
-  isOpen, onClose, onSave, categoryToEdit, availableIcons 
+  isOpen, onClose, onSave, categoryToEdit, availableIcons, initialName 
 }) => {
   const [name, setName] = useState('');
   const [selectedIcon, setSelectedIcon] = useState<string | null>(null);
@@ -30,22 +30,19 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
         setName(categoryToEdit.name);
         setSelectedIcon(categoryToEdit.icon_name || null);
       } else {
-        setName('');
+        // ✅ NEW: In 'add' mode, use the initialName if it exists
+        setName(initialName || '');
         setSelectedIcon(null);
       }
       setError(null);
     }
-  }, [categoryToEdit, isOpen]);
+  }, [categoryToEdit, isOpen, initialName]); // ✅ NEW: Add initialName to dependency array
 
   const handleSave = async () => {
     if (!name.trim()) {
       setError('Category name cannot be empty.');
       return;
     }
-
-    // Note: The logic to check for used icons is now in the parent (Settings.tsx).
-    // The `availableIcons` prop already contains only the valid choices.
-    // However, we still need a backend check for race conditions.
 
     try {
       setIsSaving(true);
@@ -87,7 +84,6 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
           />
         </div>
         
-        {/* ✅ --- FIX #3: Pass the correct prop down to the IconPicker --- */}
         <IconPicker 
           selectedValue={selectedIcon} 
           onIconSelect={setSelectedIcon} 
