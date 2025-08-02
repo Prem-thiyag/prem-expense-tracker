@@ -1,10 +1,8 @@
 // File: src/components/Navbar.tsx
 
 import React, { useState, useEffect, useRef } from "react";
-// ✅ NEW: Import useNavigate
 import { NavLink, Link, useNavigate } from "react-router-dom";
-// ✅ NEW: Import PlusCircle icon
-import { Bell, UserCircle, Clock, CheckCircle, PlusCircle } from "lucide-react";
+import { Bell, UserCircle, Clock, CheckCircle, PlusCircle, X } from "lucide-react"; // ✅ Import X icon
 import logo from "../assets/logo.png";
 import { logout, getUnreadAlerts, acknowledgeAlert } from "../api/apiClient";
 import type { Alert } from "../types";
@@ -23,7 +21,6 @@ const Navbar: React.FC = () => {
   
   const menuRef = useRef<HTMLDivElement>(null);
   const alertsRef = useRef<HTMLDivElement>(null);
-  // ✅ NEW: Initialize the navigate function
   const navigate = useNavigate();
 
   const unreadCount = alerts.length;
@@ -105,17 +102,14 @@ const Navbar: React.FC = () => {
     }
   };
 
-  // ✅ NEW: Handler for clicking a 'new_category' alert
   const handleNewCategoryAlertClick = (alert: Alert) => {
     if (alert.context?.category_name) {
-      // Navigate to settings and pass the name in state
       navigate('/settings', { state: { newCategoryName: alert.context.category_name } });
-      setIsAlertsOpen(false); // Close the dropdown
-      handleAcknowledgeAlert(alert.id); // Dismiss the alert
+      setIsAlertsOpen(false);
+      handleAcknowledgeAlert(alert.id);
     }
   };
-
-  // ✅ NEW: A render function to handle different alert types
+  
   const renderAlertContent = (alert: Alert) => {
     if (alert.type === 'new_category' && alert.context?.category_name) {
       return (
@@ -125,9 +119,15 @@ const Navbar: React.FC = () => {
             <p className="text-sm">New category found: <strong>{alert.context.category_name}</strong></p>
             <p className="text-xs text-gray-400 mt-1">{dayjs(alert.triggered_at).fromNow()}</p>
           </div>
-          <button onClick={() => handleNewCategoryAlertClick(alert)} title="Add this category" className="p-1 text-gray-400 hover:text-green-600 flex-shrink-0">
-            <PlusCircle size={18} />
-          </button>
+          {/* ✅ NEW: Container for the two action buttons */}
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button onClick={() => handleAcknowledgeAlert(alert.id)} title="Ignore" className="p-1 text-gray-400 hover:text-red-600">
+              <X size={18} />
+            </button>
+            <button onClick={() => handleNewCategoryAlertClick(alert)} title="Add this category" className="p-1 text-gray-400 hover:text-green-600">
+              <PlusCircle size={18} />
+            </button>
+          </div>
         </div>
       );
     }
@@ -149,7 +149,6 @@ const Navbar: React.FC = () => {
       );
     }
     
-    // Fallback for any unknown alert types
     return null;
   };
 
@@ -189,7 +188,6 @@ const Navbar: React.FC = () => {
             <div className="absolute right-0 mt-2 w-80 bg-white text-gray-800 rounded shadow-lg z-50 max-h-96 overflow-y-auto">
               <div className="p-3 font-bold border-b">Notifications</div>
               {alerts.length > 0 ? (
-                // ✅ NEW: Use the render function instead of direct mapping
                 alerts.map(alert => renderAlertContent(alert))
               ) : (
                 <p className="p-4 text-sm text-center text-gray-500">You're all caught up!</p>

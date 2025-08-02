@@ -1,11 +1,9 @@
 // File: src/Dashboard/Dashboard.tsx
 
 import React, { useState, useEffect } from 'react';
-// We still need getCategories for the RecentTransactionsTable
 import { getDashboardData, getCategories } from '../api/apiClient'; 
 import type { DashboardData, Category } from '../types';
 
-// Import all the real dashboard components
 import KPICards from './components/KPICards';
 import MonthFilter from './components/MonthFilter';
 import TopSpendCategoriesChart from './components/TopSpendCategoriesChart';
@@ -13,14 +11,15 @@ import RecentTransactionsTable from './components/RecentTransactionsTable';
 import SpendingTrendChart from './components/SpendingTrendChart'; 
 
 const Dashboard: React.FC = () => {
-  // --- STATE MANAGEMENT ---
   const [data, setData] = useState<DashboardData | null>(null);
   const [allCategories, setAllCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [currentMonth, setCurrentMonth] = useState('2025-07');
+  
+  // ✅ --- THIS IS THE FIX for the default month ---
+  // It now dynamically gets the current month in 'YYYY-MM' format instead of being hardcoded.
+  const [currentMonth, setCurrentMonth] = useState(new Date().toISOString().slice(0, 7));
 
-  // --- DATA FETCHING ---
   useEffect(() => {
     const fetchAllData = async () => {
       try {
@@ -47,7 +46,6 @@ const Dashboard: React.FC = () => {
     fetchAllData();
   }, [currentMonth]);
 
-  // --- RENDER LOGIC ---
   if (isLoading) return <div className="p-8 text-center font-semibold">Loading Dashboard...</div>;
   if (error) return <div className="p-8 text-center text-red-500 bg-red-100 rounded-md">{error}</div>;
   if (!data) return <div className="p-8 text-center">No data available for the selected month.</div>;
@@ -69,7 +67,6 @@ const Dashboard: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-64">
         <SpendingTrendChart data={data.spendingTrend} />
-        {/* ✅ Pass the currentMonth prop to the chart */}
         <TopSpendCategoriesChart data={data.topSpendingCategories} currentMonth={currentMonth} />
       </div>
 

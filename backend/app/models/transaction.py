@@ -21,9 +21,6 @@ class Transaction(Base):
     merchant_id = Column(Integer, ForeignKey("merchants.id"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     
-    # ✅ --- THIS IS THE FIX (Part 1) ---
-    # Remove unique=True from unique_key. We will define a more specific constraint below.
-    # Add index=True for better performance on lookups.
     upi_ref = Column(String, nullable=True, index=True)
     unique_key = Column(String, nullable=True, index=True) 
 
@@ -39,11 +36,9 @@ class Transaction(Base):
     tags_association = relationship("TransactionTag", back_populates="transaction", cascade="all, delete-orphan")
     tags = association_proxy("tags_association", "tag")
 
-    # ✅ --- THIS IS THE FIX (Part 2) ---
-    # Define composite unique constraints that include the user_id.
-    # This ensures that a upi_ref or unique_key must be unique FOR A GIVEN USER,
-    # but different users can have the same upi_ref.
+    # ✅ --- THIS IS THE FIX ---
+    # We now ONLY enforce uniqueness on the combination of user_id and our constructed unique_key.
+    # The constraint on upi_ref has been removed.
     __table_args__ = (
         UniqueConstraint('user_id', 'unique_key', name='_user_id_unique_key_uc'),
-        UniqueConstraint('user_id', 'upi_ref', name='_user_id_upi_ref_uc'),
     )

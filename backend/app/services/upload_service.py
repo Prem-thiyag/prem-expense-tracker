@@ -13,7 +13,7 @@ from app.models.merchant import Merchant
 from app.models.tag import Tag
 from app.crud import alert_crud
 
-# --- DATA MAPPING RULES (No changes from your original) ---
+# --- DATA MAPPING RULES (No changes) ---
 TRANSFER_KEYWORDS = {
     'v revathi', 't prem', 'satish p', 'mohan kumar a', 'putte gowda', 'naveen b', 'madhu c s', 'perumal p',
     'saroja', 'c vamsi krishna', 'vivek kumar', 'pavan k', 'kiran kumar k', 'manjunath', 'sagar', 'm anand',
@@ -42,7 +42,7 @@ MERCHANT_CATEGORY_RULES = {
     'nova gamin': ('Nova Gaming', 'Entertainment'), 'financewithsharan': ('FinanceWithSharan', 'Education'),
 }
 
-# --- PARSING FUNCTIONS (No changes from your original) ---
+# --- PARSING FUNCTIONS (No changes) ---
 def parse_generic_statement(file, account_id, source, date_col, desc_col, debit_col, credit_col, ref_col=None, unique_id_col=None):
     try:
         df = pd.read_csv(file.file)
@@ -102,8 +102,7 @@ def parse_paytm_statement(file, account_map):
             print(f"Skipping Paytm row due to error: {e}")
     return transactions
 
-
-# --- NEW SMART CATEGORIZATION LOGIC ---
+# --- SMART CATEGORIZATION LOGIC (No changes) ---
 CATEGORY_ALIASES = { "miscellaneous": ["misc", "miscelleaneous"], "entertainment": ["ent"], "transportation": ["transport"] }
 
 def get_category_by_fuzzy_matching(remark: str, user_categories: dict) -> int | None:
@@ -119,7 +118,8 @@ def get_category_by_fuzzy_matching(remark: str, user_categories: dict) -> int | 
     return None
 
 def process_and_insert_transactions(db: Session, transactions: list, user_id: int) -> int:
-    existing_upi_refs = {res[0] for res in db.query(Transaction.upi_ref).filter(Transaction.user_id == user_id, Transaction.upi_ref.isnot(None)).all()}
+    # ✅ --- THIS IS THE FIX (Part 1) ---
+    # We no longer check for existing upi_ref because it is not a unique identifier.
     existing_unique_keys = {res[0] for res in db.query(Transaction.unique_key).filter(Transaction.user_id == user_id, Transaction.unique_key.isnot(None)).all()}
     
     merchants_map = {m.name: m.id for m in db.query(Merchant).filter(Merchant.user_id == user_id).all()}
@@ -130,14 +130,15 @@ def process_and_insert_transactions(db: Session, transactions: list, user_id: in
     newly_found_categories = set()
 
     for txn_data in sorted(transactions, key=lambda x: x['txn_date']):
-        if (txn_data.get('upi_ref') and str(txn_data['upi_ref']) in existing_upi_refs) or \
-           (txn_data.get('unique_key') and txn_data['unique_key'] in existing_unique_keys):
+        # ✅ --- THIS IS THE FIX (Part 2) ---
+        # The duplicate check now ONLY relies on the more robust unique_key.
+        if (txn_data.get('unique_key') and txn_data['unique_key'] in existing_unique_keys):
             continue
             
         detected_merchant_id, detected_category_id = None, None
         desc = txn_data['description']
         
-        remark_match = re.search(r'/(.*?)/', desc, re.IGNORECASE)
+        remark_match = re.search(r'/([^/]+)/', desc, re.IGNORECASE)
         if remark_match:
             user_remark = remark_match.group(1)
             matched_id = get_category_by_fuzzy_matching(user_remark, user_categories_map)
@@ -168,7 +169,7 @@ def process_and_insert_transactions(db: Session, transactions: list, user_id: in
         db.add(txn)
         inserted_count += 1
         
-        if txn_data.get('upi_ref'): existing_upi_refs.add(txn_data['upi_ref'])
+        # We only need to add the new unique_key to our set for the current batch.
         if txn_data.get('unique_key'): existing_unique_keys.add(txn_data['unique_key'])
 
     for cat_name in newly_found_categories:
