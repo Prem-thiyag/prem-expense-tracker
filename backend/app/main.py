@@ -12,7 +12,7 @@ app = FastAPI(title="Personal Finance Tracker API")
 
 # ✅ --- THIS IS THE CRITICAL FIX ---
 # This list defines which frontend URLs are allowed to make requests to your API.
-# The "*" wildcard has been removed for security.
+# The "*" wildcard has been removed forq security.
 origins = [
     # This is the URL you will get AFTER you deploy your frontend to Vercel.
     # You MUST replace this placeholder with your real Vercel URL.
