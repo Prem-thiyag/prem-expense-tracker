@@ -6,61 +6,60 @@ import type { DashboardData, BudgetPageData, Category, Transaction, Tag, Account
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
 
+// Checks both storages — localStorage for "Remember Me" sessions, sessionStorage for tab sessions
+const getToken = (): string | null =>
+  localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+
+const clearToken = () => {
+  localStorage.removeItem('accessToken');
+  sessionStorage.removeItem('accessToken');
+};
+
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Request interceptor (unchanged) - adds the token to every request
 apiClient.interceptors.request.use(config => {
-  const token = sessionStorage.getItem('accessToken');
+  const token = getToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
-}, error => {
-  return Promise.reject(error);
-});
+}, error => Promise.reject(error));
 
-// //! THIS IS THE FIX: A new response interceptor to handle expired tokens.
-// This function will run for EVERY response from the backend.
 apiClient.interceptors.response.use(
-  (response) => response, // If the response is successful, just pass it through.
+  (response) => response,
   (error) => {
-    // If the server responds with an error
     if (error.response && error.response.status === 401) {
-      // If the error is "401 Unauthorized"
       toast.error('Your session has expired. Please log in again.');
-      // Remove the invalid token from storage
-      sessionStorage.removeItem('accessToken');
-      // Redirect the user to the login page
+      clearToken();
       window.location.href = '/login';
     }
-    // For all other errors, just pass them along to the component to handle.
     return Promise.reject(error);
   }
 );
 
 
 // --- Authentication Functions ---
-// (No changes needed in login, register, logout, etc.)
-export const login = async (username: string, password: string): Promise<{ access_token: string }> => {
-  const params = new URLSearchParams();
-  params.append('username', username);
-  params.append('password', password);
-  const response = await apiClient.post('/auth/login/password', params, {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-  });
+export const login = async (identifier: string, password: string, rememberMe = false): Promise<{ access_token: string }> => {
+  const response = await apiClient.post('/auth/login', { identifier, password, remember_me: rememberMe });
   if (response.data.access_token) {
-    sessionStorage.setItem('accessToken', response.data.access_token);
+    if (rememberMe) {
+      localStorage.setItem('accessToken', response.data.access_token);
+    } else {
+      sessionStorage.setItem('accessToken', response.data.access_token);
+    }
   }
   return response.data;
 };
 export const register = (userData: any): Promise<any> => apiClient.post('/auth/register', userData).then(res => res.data);
 export const logout = () => {
-  sessionStorage.removeItem('accessToken');
-  window.location.href = '/login'; // Redirect on manual logout too
+  clearToken();
+  window.location.href = '/login';
 };
+export const changePassword = (data: { old_password: string; new_password: string }): Promise<{ message: string }> =>
+  apiClient.post('/auth/change-password', data).then(res => res.data);
 export const getMyProfile = (): Promise<User> => apiClient.get<User>('/users/me').then(res => res.data);
 
 // --- Your Existing API Functions (No changes needed below) ---

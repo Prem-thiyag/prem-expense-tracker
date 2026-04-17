@@ -1,17 +1,27 @@
 // File: src/Profile/ProfilePage.tsx
-
 import React, { useState, useEffect } from 'react';
-import { getMyProfile } from '../api/apiClient';
+import { getMyProfile, changePassword } from '../api/apiClient';
 import type { User } from '../types';
-import { UserCircle, Mail } from 'lucide-react';
+import { UserCircle, Mail, KeyRound, Eye, EyeOff } from 'lucide-react';
+import toast from 'react-hot-toast';
+import PasswordStrength from '../auth/PasswordStrength';
+
+const isPasswordStrong = (p: string) =>
+    p.length >= 8 && /[A-Z]/.test(p) && /[a-z]/.test(p) && /[0-9]/.test(p) && /[\W_]/.test(p);
 
 const ProfilePage: React.FC = () => {
-    // State to hold user data, loading status, and any errors
     const [user, setUser] = useState<User | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    // Fetch the user's profile information when the component mounts
+    const [oldPassword, setOldPassword] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmNew, setConfirmNew] = useState('');
+    const [showOld, setShowOld] = useState(false);
+    const [showNew, setShowNew] = useState(false);
+    const [showConfirm, setShowConfirm] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+
     useEffect(() => {
         const fetchProfile = async () => {
             try {
@@ -25,61 +35,138 @@ const ProfilePage: React.FC = () => {
                 setIsLoading(false);
             }
         };
-
         fetchProfile();
-    }, []); // The empty dependency array ensures this runs only once
+    }, []);
 
-    // --- Render Logic ---
+    const handleChangePassword = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!isPasswordStrong(newPassword)) {
+            toast.error('New password does not meet security requirements.');
+            return;
+        }
+        if (newPassword !== confirmNew) {
+            toast.error('New passwords do not match.');
+            return;
+        }
+        if (oldPassword === newPassword) {
+            toast.error('New password must be different from the current password.');
+            return;
+        }
+        setIsSaving(true);
+        try {
+            await changePassword({ old_password: oldPassword, new_password: newPassword });
+            toast.success('Password changed successfully!');
+            setOldPassword('');
+            setNewPassword('');
+            setConfirmNew('');
+        } catch (err: any) {
+            const msg = err.response?.data?.detail || 'Failed to change password.';
+            toast.error(msg);
+        } finally {
+            setIsSaving(false);
+        }
+    };
 
-    if (isLoading) {
-        return <div className="p-8 text-center font-semibold">Loading Profile...</div>;
-    }
-
-    if (error) {
-        return <div className="p-8 text-center text-red-500 bg-red-50 rounded-lg">{error}</div>;
-    }
-
-    if (!user) {
-        return <div className="p-8 text-center">Could not find user data.</div>;
-    }
-
-    // --- Main Component View ---
+    if (isLoading) return <div className="p-8 text-center font-semibold">Loading Profile...</div>;
+    if (error) return <div className="p-8 text-center text-red-500 bg-red-50 rounded-lg">{error}</div>;
+    if (!user) return <div className="p-8 text-center">Could not find user data.</div>;
 
     return (
-        <div className="p-4 md:p-8 max-w-2xl mx-auto">
-            <header className="mb-6">
+        <div className="p-4 md:p-8 max-w-2xl mx-auto space-y-6">
+            <header className="mb-2">
                 <h1 className="text-3xl font-bold text-gray-800">Your Profile</h1>
-                <p className="text-gray-500 mt-1">View your account details below.</p>
+                <p className="text-gray-500 mt-1">View your account details and manage your password.</p>
             </header>
-            
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
-                <div className="space-y-4">
-                    {/* Username Field */}
-                    <div>
-                        <label className="text-sm font-medium text-gray-600 flex items-center">
-                            <UserCircle size={16} className="mr-2" />
-                            Username
-                        </label>
-                        <p className="mt-1 text-lg text-gray-800 font-semibold bg-gray-50 p-3 rounded-md">
-                            {user.username}
-                        </p>
-                    </div>
 
-                    {/* Email Field */}
+            {/* Account Info */}
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
+                <h2 className="text-lg font-semibold text-gray-700 mb-4">Account Details</h2>
+                <div className="space-y-4">
                     <div>
                         <label className="text-sm font-medium text-gray-600 flex items-center">
-                            <Mail size={16} className="mr-2" />
-                            Email Address
+                            <UserCircle size={16} className="mr-2" /> Username
                         </label>
-                        <p className="mt-1 text-lg text-gray-800 font-semibold bg-gray-50 p-3 rounded-md">
-                            {user.email}
-                        </p>
+                        <p className="mt-1 text-lg text-gray-800 font-semibold bg-gray-50 p-3 rounded-md">{user.username}</p>
+                    </div>
+                    <div>
+                        <label className="text-sm font-medium text-gray-600 flex items-center">
+                            <Mail size={16} className="mr-2" /> Email Address
+                        </label>
+                        <p className="mt-1 text-lg text-gray-800 font-semibold bg-gray-50 p-3 rounded-md">{user.email}</p>
                     </div>
                 </div>
             </div>
 
-            <div className="mt-6 text-center text-sm text-gray-500">
-                <p>To change your password or delete your account, please go to the Settings page.</p>
+            {/* Change Password */}
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
+                <h2 className="text-lg font-semibold text-gray-700 mb-4 flex items-center gap-2">
+                    <KeyRound size={18} /> Change Password
+                </h2>
+                <form onSubmit={handleChangePassword} className="space-y-4">
+                    <div>
+                        <label className="text-sm font-semibold">Current Password</label>
+                        <div className="relative">
+                            <input
+                                type={showOld ? 'text' : 'password'}
+                                value={oldPassword}
+                                onChange={e => setOldPassword(e.target.value)}
+                                placeholder="Enter your current password"
+                                className="w-full p-3 mt-1 border rounded-lg pr-10"
+                                required
+                            />
+                            <button type="button" onClick={() => setShowOld(!showOld)} className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700">
+                                {showOld ? <EyeOff size={18} /> : <Eye size={18} />}
+                            </button>
+                        </div>
+                    </div>
+                    <div>
+                        <label className="text-sm font-semibold">New Password</label>
+                        <div className="relative">
+                            <input
+                                type={showNew ? 'text' : 'password'}
+                                value={newPassword}
+                                onChange={e => setNewPassword(e.target.value)}
+                                placeholder="Create a new strong password"
+                                className="w-full p-3 mt-1 border rounded-lg pr-10"
+                                required
+                            />
+                            <button type="button" onClick={() => setShowNew(!showNew)} className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700">
+                                {showNew ? <EyeOff size={18} /> : <Eye size={18} />}
+                            </button>
+                        </div>
+                        <PasswordStrength password={newPassword} />
+                    </div>
+                    <div>
+                        <label className="text-sm font-semibold">Confirm New Password</label>
+                        <div className="relative">
+                            <input
+                                type={showConfirm ? 'text' : 'password'}
+                                value={confirmNew}
+                                onChange={e => setConfirmNew(e.target.value)}
+                                placeholder="Repeat your new password"
+                                className={`w-full p-3 mt-1 border rounded-lg pr-10 ${confirmNew && newPassword !== confirmNew ? 'border-red-500' : ''}`}
+                                required
+                            />
+                            <button type="button" onClick={() => setShowConfirm(!showConfirm)} className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700">
+                                {showConfirm ? <EyeOff size={18} /> : <Eye size={18} />}
+                            </button>
+                        </div>
+                        {confirmNew && newPassword !== confirmNew && (
+                            <p className="text-xs text-red-500 mt-1">Passwords do not match.</p>
+                        )}
+                    </div>
+                    <button
+                        type="submit"
+                        disabled={isSaving}
+                        className="px-6 py-2.5 text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 font-semibold"
+                    >
+                        {isSaving ? 'Saving...' : 'Update Password'}
+                    </button>
+                </form>
+            </div>
+
+            <div className="text-center text-sm text-gray-500">
+                <p>To delete your account, please go to the Settings page.</p>
             </div>
         </div>
     );

@@ -2,10 +2,9 @@
 import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 
-// This function now checks sessionStorage
+// Checks both storages: localStorage for "Remember Me" sessions, sessionStorage for tab sessions
 const isAuthenticated = (): boolean => {
-    const token = sessionStorage.getItem('accessToken');
-    return !!token;
+    return !!(localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken'));
 };
 
 interface ProtectedRouteProps {
@@ -16,11 +15,9 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
     const location = useLocation();
 
     if (!isAuthenticated()) {
-        // If the user is not authenticated, redirect them to the /login page
         return <Navigate to="/login" state={{ from: location }} replace />;
     }
 
-    // If the user is authenticated, render the children (the MainLayout)
     return <>{children}</>;
 };
 

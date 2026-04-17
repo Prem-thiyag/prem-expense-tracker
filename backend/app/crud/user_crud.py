@@ -29,6 +29,13 @@ def create_user(db: Session, user: UserCreate):
     db.refresh(db_user)
     return db_user
 
+def update_password(db: Session, user_id: int, new_hashed_password: str):
+    user = db.query(User).filter(User.id == user_id).first()
+    if user:
+        user.hashed_password = new_hashed_password
+        db.commit()
+    return user
+
 def delete_user(db: Session, user_id: int):
     user = db.query(User).filter(User.id == user_id).first()
     if user:

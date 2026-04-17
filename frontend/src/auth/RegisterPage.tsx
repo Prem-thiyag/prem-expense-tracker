@@ -5,8 +5,8 @@ import { register } from '../api/apiClient';
 import toast from 'react-hot-toast';
 import PasswordStrength from './PasswordStrength';
 import registerImage from '../assets/register.png';
+import { Eye, EyeOff } from 'lucide-react';
 
-// Validation utility functions
 const isEmailValid = (email: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const isPasswordStrong = (password: string): boolean => {
     return password.length >= 8 && /[A-Z]/.test(password) && /[a-z]/.test(password) && /[0-9]/.test(password) && /[\W_]/.test(password);
@@ -17,6 +17,8 @@ const RegisterPage: React.FC = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
+    const [showConfirm, setShowConfirm] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const navigate = useNavigate();
 
@@ -25,34 +27,19 @@ const RegisterPage: React.FC = () => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        
-        //! THIS IS THE FIX: Pre-submission validation with specific toasts
-        if (!username.trim()) {
-            toast.error("Please enter your name.");
-            return;
-        }
-        if (emailError) {
-            toast.error(emailError);
-            return;
-        }
-        if (!isPasswordStrong(password)) {
-            toast.error("Password does not meet all the security requirements.");
-            return;
-        }
-        if (passwordMatchError) {
-            toast.error(passwordMatchError);
-            return;
-        }
-        
+        if (!username.trim()) { toast.error("Please enter your name."); return; }
+        if (emailError) { toast.error(emailError); return; }
+        if (!isPasswordStrong(password)) { toast.error("Password does not meet all the security requirements."); return; }
+        if (passwordMatchError) { toast.error(passwordMatchError); return; }
+
         setIsLoading(true);
-        // This part will only run if all frontend validations pass
         try {
             await register({ email, username, password });
-            toast.success("Account created successfully! Please log in.", { id: `register-success`, duration: 4000 });
+            toast.success("Account created successfully! Please log in.", { id: 'register-success', duration: 4000 });
             navigate('/login');
         } catch (error: any) {
             const errorMessage = error.response?.data?.detail || "Registration failed. That username or email may already be taken.";
-            toast.error(errorMessage, { id: `register-error` });
+            toast.error(errorMessage, { id: 'register-error' });
         } finally {
             setIsLoading(false);
         }
@@ -71,18 +58,42 @@ const RegisterPage: React.FC = () => {
                         </div>
                         <div>
                             <label className="text-sm font-semibold">Email</label>
-                            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="e.g., your@email.com" className={`w-full p-3 mt-1 border rounded-lg ${emailError ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : ''}`} required />
+                            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="e.g., your@email.com" className={`w-full p-3 mt-1 border rounded-lg ${emailError ? 'border-red-500' : ''}`} required />
                             {emailError && <p className="text-xs text-red-500 mt-1">{emailError}</p>}
                         </div>
                         <div>
                             <label className="text-sm font-semibold">Password</label>
-                            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Create a strong password" className="w-full p-3 mt-1 border rounded-lg" required />
-                        </div>
-                         <div>
-                            <label className="text-sm font-semibold">Confirm Password</label>
-                            <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Confirm your password" className={`w-full p-3 mt-1 border rounded-lg ${passwordMatchError ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : ''}`} required />
-                            {passwordMatchError && <p className="text-xs text-red-500 mt-1">{passwordMatchError}</p>}
+                            <div className="relative">
+                                <input
+                                    type={showPassword ? 'text' : 'password'}
+                                    value={password}
+                                    onChange={e => setPassword(e.target.value)}
+                                    placeholder="Create a strong password"
+                                    className="w-full p-3 mt-1 border rounded-lg pr-10"
+                                    required
+                                />
+                                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700" aria-label="Toggle password visibility">
+                                    {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                                </button>
+                            </div>
                             <PasswordStrength password={password} />
+                        </div>
+                        <div>
+                            <label className="text-sm font-semibold">Confirm Password</label>
+                            <div className="relative">
+                                <input
+                                    type={showConfirm ? 'text' : 'password'}
+                                    value={confirmPassword}
+                                    onChange={e => setConfirmPassword(e.target.value)}
+                                    placeholder="Confirm your password"
+                                    className={`w-full p-3 mt-1 border rounded-lg pr-10 ${passwordMatchError ? 'border-red-500' : ''}`}
+                                    required
+                                />
+                                <button type="button" onClick={() => setShowConfirm(!showConfirm)} className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700" aria-label="Toggle confirm password visibility">
+                                    {showConfirm ? <EyeOff size={20} /> : <Eye size={20} />}
+                                </button>
+                            </div>
+                            {passwordMatchError && <p className="text-xs text-red-500 mt-1">{passwordMatchError}</p>}
                         </div>
                         <button type="submit" disabled={isLoading} className="w-full p-3 text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 font-semibold">
                             {isLoading ? 'Registering...' : 'Register'}

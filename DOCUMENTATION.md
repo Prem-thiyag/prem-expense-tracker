@@ -19,6 +19,8 @@
 11. [Local Development Setup](#11-local-development-setup)
 12. [Deployment](#12-deployment)
 13. [Environment Variables Reference](#13-environment-variables-reference)
+14. [Password Management](#14-password-management)
+15. [Converting This Document to Word (.docx)](#15-converting-this-document-to-word-docx)
 
 ---
 
@@ -37,7 +39,7 @@
 | Budget Alerts | Proactive alerts at 75%, 90%, and 100% of a category budget |
 | Analytics | Spending velocity, habit identifier, category distribution, monthly breakdown, transaction heatmap |
 | Settings | Manage categories (with icons), tags, bank accounts |
-| Auth | JWT-based registration + login; session timer in navbar; auto-logout on expiry |
+| Auth | JWT-based registration + login; Remember Me (7-day token); Change Password from Profile; session timer in navbar; auto-logout on expiry |
 
 ---
 
@@ -222,7 +224,7 @@ This folder contains one file per feature domain. All routes are registered thro
 | File | Prefix | Purpose |
 |---|---|---|
 | `api_router.py` | — | Aggregates all routers into one |
-| `auth_router.py` | `/auth` | Register + login |
+| `auth_router.py` | `/auth` | Register, JSON login with Remember Me, change password |
 | `users_router.py` | `/users` | Get/delete current user profile |
 | `account_router.py` | `/accounts` | CRUD for bank accounts |
 | `category_router.py` | `/categories` | CRUD for spending categories |
@@ -238,7 +240,7 @@ This folder contains one file per feature domain. All routes are registered thro
 | `upload_router.py` | `/settings` | Bank statement CSV upload |
 | `test_router.py` | `/test` | DB connectivity test |
 
-Every route except `/auth/register`, `/auth/login/password`, and `/test/test-db` requires a valid JWT via `Depends(deps.get_current_active_user)`.
+Every route except `/auth/register`, `/auth/login/password`, `/auth/login`, and `/test/test-db` requires a valid JWT via `Depends(deps.get_current_active_user)`.
 
 ---
 
@@ -282,7 +284,7 @@ class ThingOut(ThingBase):       # what gets returned in responses
 | File | Covers |
 |---|---|
 | `user_schema.py` | UserCreate (with password validation), UserOut |
-| `auth_schema.py` | Token (access_token, token_type) |
+| `auth_schema.py` | Token, LoginRequest (identifier + password + remember_me), ChangePasswordRequest (old_password + new_password) |
 | `account_schema.py` | AccountCreate, AccountUpdate, AccountOut |
 | `category_schema.py` | CategoryCreate, CategoryUpdate, CategoryOut |
 | `transaction_schema.py` | TransactionCreate, TransactionUpdate, TransactionOut |
@@ -308,7 +310,7 @@ def get_all_things(db: Session, user_id: int) -> list[Thing]:
 
 | File | Key Behaviours |
 |---|---|
-| `user_crud.py` | Create user, get by email, get by ID, delete cascade |
+| `user_crud.py` | Create user, get by email, get by ID, update password, delete cascade |
 | `account_crud.py` | UniqueConstraint on (user_id, name) |
 | `category_crud.py` | On delete: uncategorises existing transactions |
 | `transaction_crud.py` | Smart category detection (`_get_smart_category`), triggers budget alerts on create/update |
@@ -341,7 +343,7 @@ Services contain logic that is too complex for a single CRUD call. Routers deleg
 | File | What it does |
 |---|---|
 | `config.py` | `Settings` class reads `DATABASE_URL` from environment via `pydantic-settings`. Import as `from app.core.config import settings` |
-| `security.py` | `get_password_hash()`, `verify_password()`, `create_access_token()` — all JWT and bcrypt logic lives here |
+| `security.py` | `get_password_hash()`, `verify_password()`, `create_access_token()` — all JWT and bcrypt logic. Constants: `ACCESS_TOKEN_EXPIRE_MINUTES = 60` (session), `REMEMBER_ME_EXPIRE_DAYS = 7` (Remember Me) |
 | `deps.py` | FastAPI dependency `get_current_active_user(token)` — decodes JWT, loads user from DB, raises 401 if invalid. Injected into every protected route |
 
 ---
@@ -384,9 +386,10 @@ Defines all routes. Every route except `/login` and `/register` is wrapped in `<
 **This is the only file that makes HTTP calls.** All components import functions from here — nothing calls `axios` directly from a component.
 
 - Creates an Axios instance with `baseURL = VITE_API_BASE_URL || http://localhost:8000/api/v1`
-- **Request interceptor:** Reads `accessToken` from `sessionStorage` and adds `Authorization: Bearer <token>` to every request
-- **Response interceptor:** On 401 response — shows a toast, removes the token, redirects to `/login`
-- Exports one named function per API call (e.g. `getDashboardData`, `createTransaction`, `uploadStatements`)
+- **Smart token storage:** `getToken()` checks `localStorage` first (Remember Me sessions), then `sessionStorage` (tab sessions). `clearToken()` wipes both on logout/401
+- **Request interceptor:** Calls `getToken()` and adds `Authorization: Bearer <token>` to every request
+- **Response interceptor:** On 401 — shows toast, calls `clearToken()`, redirects to `/login`
+- Exports one named function per API call (e.g. `getDashboardData`, `createTransaction`, `uploadStatements`, `changePassword`)
 
 ---
 
@@ -394,10 +397,10 @@ Defines all routes. Every route except `/login` and `/register` is wrapped in `<
 
 | File | Purpose |
 |---|---|
-| `LoginPage.tsx` | Email/username + password form. On success: stores token in `sessionStorage`, navigates to `/dashboard` |
-| `RegisterPage.tsx` | Name, email, password, confirm password. Validates all fields before submitting |
-| `PasswordStrength.tsx` | Shows 5 password criteria (length, uppercase, lowercase, digit, special char) with live checkmarks |
-| `ProtectedRoute.tsx` | Checks `sessionStorage.getItem('accessToken')`. If missing → `<Navigate to="/login">` |
+| `LoginPage.tsx` | Email/username + password form. **Remember Me checkbox** — checked stores 7-day token in `localStorage`; unchecked stores 60-min token in `sessionStorage`. **Forgot Password** button opens a modal explaining to contact admin for reset. Show/hide password toggle |
+| `RegisterPage.tsx` | Name, email, password, confirm password. Show/hide toggle on both password fields. `PasswordStrength` component shown directly below the password field (live feedback as you type). Validates all fields before submitting |
+| `PasswordStrength.tsx` | Shows 5 password criteria (length, uppercase, lowercase, digit, special char) with live green/red checkmarks. Reused on Register and Profile pages |
+| `ProtectedRoute.tsx` | Checks `localStorage` then `sessionStorage` for `accessToken`. If missing in both → `<Navigate to="/login">` |
 
 ---
 
@@ -494,7 +497,12 @@ Defines all routes. Every route except `/login` and `/register` is wrapped in `<
 
 ### `src/Profile/ProfilePage.tsx`
 
-Read-only display of the current user's username and email. Fetches from `GET /users/me`.
+Displays the current user's username and email (fetched from `GET /users/me`), and includes a full **Change Password** form:
+- Current password field (verified against the backend before accepting)
+- New password field with live `PasswordStrength` indicator
+- Confirm new password field with real-time match validation
+- Show/hide eye toggle on all three password fields
+- Calls `POST /auth/change-password`
 
 ---
 
@@ -699,10 +707,12 @@ All endpoints are prefixed with `/api/v1`. All endpoints except auth require `Au
 
 ### Authentication
 
-| Method | Path | Body | Response |
-|---|---|---|---|
-| POST | `/auth/register` | `{ username, email, password }` | `UserOut` |
-| POST | `/auth/login/password` | form-data: `username`, `password` | `{ access_token, token_type }` |
+| Method | Path | Auth | Body | Response |
+|---|---|---|---|---|
+| POST | `/auth/register` | None | `{ username, email, password }` | `UserOut` |
+| POST | `/auth/login` | None | `{ identifier, password, remember_me }` | `{ access_token, token_type }` — token valid 7 days if `remember_me: true`, 60 min otherwise |
+| POST | `/auth/login/password` | None | form-data: `username`, `password` | `{ access_token, token_type }` — legacy form endpoint (Swagger UI) |
+| POST | `/auth/change-password` | Required | `{ old_password, new_password }` | `{ message }` |
 
 ### Users
 
@@ -826,14 +836,17 @@ All endpoints are prefixed with `/api/v1`. All endpoints except auth require `Au
 ### Login
 
 ```
-1. User submits email/username + password
-2. POST /auth/login/password (application/x-www-form-urlencoded)
+1. User submits email/username + password (+ optional Remember Me checkbox)
+2. POST /auth/login (JSON body: { identifier, password, remember_me })
 3. Backend:
    a. Looks up user by email or username
    b. Verifies password with bcrypt
-   c. Creates JWT: { sub: user.email, exp: now + 60 minutes }
+   c. If remember_me = true  → JWT exp: now + 7 days
+      If remember_me = false → JWT exp: now + 60 minutes
    d. Returns { access_token, token_type: "bearer" }
-4. Frontend stores token in sessionStorage ('accessToken')
+4. Frontend:
+   If remember_me = true  → stores token in localStorage  (survives tab/browser close)
+   If remember_me = false → stores token in sessionStorage (cleared when tab closes)
 5. Navigates to /dashboard
 ```
 
@@ -841,8 +854,9 @@ All endpoints are prefixed with `/api/v1`. All endpoints except auth require `Au
 
 ```
 Every API call:
-  → Axios request interceptor reads sessionStorage('accessToken')
-  → Adds header: Authorization: Bearer <token>
+  → Axios request interceptor calls getToken()
+      → checks localStorage first, then sessionStorage
+      → adds header: Authorization: Bearer <token>
   → Backend: FastAPI dependency get_current_active_user()
       → Decodes JWT with SECRET_KEY (HS256)
       → Extracts email from 'sub' claim
@@ -851,13 +865,25 @@ Every API call:
       → If token invalid/expired → HTTP 401
   → Axios response interceptor catches 401
       → Shows toast "Your session has expired"
-      → Clears sessionStorage
+      → Calls clearToken() — wipes both localStorage and sessionStorage
       → Redirects to /login
+```
+
+### Change Password (Logged In)
+
+```
+1. User goes to Profile page → Change Password section
+2. Enters current password, new password, confirm new password
+3. POST /auth/change-password  (requires Bearer token)
+4. Backend verifies old password with bcrypt
+5. If correct → hashes new password → updates hashed_password in DB
+6. Returns { message: "Password updated successfully" }
+7. User can now log in with the new password
 ```
 
 ### Session Timer (Navbar)
 
-The Navbar decodes the JWT in `sessionStorage` client-side to read the `exp` claim, then runs a `setInterval` every second to display a countdown. When the timer hits zero, the next API call will receive a 401 and the interceptor handles logout.
+The Navbar decodes the JWT in storage client-side to read the `exp` claim, then runs a `setInterval` every second to display a countdown. For Remember Me sessions (7-day token), this will show a large remaining time. When the timer hits zero, the next API call will receive a 401 and the interceptor handles logout.
 
 ---
 
@@ -1116,3 +1142,125 @@ Then redeploy the backend.
 | `VITE_API_BASE_URL` | No | `http://localhost:8000/api/v1` | Set on Vercel to point to the Render backend URL. If not set, falls back to localhost (local dev) |
 
 > **Security note:** The `SECRET_KEY` in `backend/.env` is for local development only. The production `SECRET_KEY` should be a strong random string set directly on Render — never commit production secrets to git.
+
+---
+
+## 14. Password Management
+
+### Option A — Change Password While Logged In (Preferred)
+
+If you know your current password, go to **Profile page → Change Password section**.
+
+1. Enter your **current password**
+2. Enter and confirm your **new password** (must meet strength requirements)
+3. Click **Update Password**
+
+The change takes effect immediately. Your existing session stays active.
+
+---
+
+### Option B — Reset Forgotten Password via Supabase (Admin Reset)
+
+Use this when you cannot log in because you've forgotten your password. This requires access to the Supabase dashboard.
+
+**Step 1 — Generate a new bcrypt hash**
+
+Run this in your terminal (with the backend venv activated):
+
+```bash
+cd backend
+venv\Scripts\activate
+python -c "from passlib.context import CryptContext; ctx = CryptContext(schemes=['bcrypt'], deprecated='auto'); print(ctx.hash('YourNewPassword123!'))"
+```
+
+Replace `YourNewPassword123!` with your chosen new password. Copy the output hash (starts with `$2b$12$...`).
+
+**Step 2 — Update the password in Supabase**
+
+1. Go to [supabase.com](https://supabase.com) → your project
+2. Left sidebar → **SQL Editor** → New Query
+3. Run:
+
+```sql
+UPDATE users
+SET hashed_password = '$2b$12$<paste-your-hash-here>'
+WHERE id = <your-user-id>;
+```
+
+To find your user ID first:
+```sql
+SELECT id, username, email FROM users;
+```
+
+**Step 3 — Verify and log in**
+
+```sql
+SELECT id, username, email FROM users WHERE id = <your-user-id>;
+```
+
+Confirm the hash updated, then log in with your new password. Once logged in, you can change it again from Profile if needed.
+
+---
+
+### Password Requirements
+
+All passwords (registration and change) must meet:
+
+| Rule | Requirement |
+|---|---|
+| Length | At least 8 characters |
+| Uppercase | At least one uppercase letter (A–Z) |
+| Lowercase | At least one lowercase letter (a–z) |
+| Number | At least one digit (0–9) |
+| Special character | At least one special character (!@#$%^&* etc.) |
+
+---
+
+## 15. Converting This Document to Word (.docx)
+
+### Option A — Using Pandoc (Recommended, one-time install)
+
+**Install Pandoc (one time):**
+
+```bash
+winget install pandoc
+```
+
+Or download the installer from [pandoc.org/installing.html](https://pandoc.org/installing.html) → Windows → .msi installer.
+
+**Convert:**
+
+```bash
+cd "c:\Prem-1\Personal Finance Tracker-Project\Post Prod\prem-expense-tracker"
+pandoc DOCUMENTATION.md -o DOCUMENTATION.docx
+```
+
+For a styled output with a reference template:
+
+```bash
+pandoc DOCUMENTATION.md -o DOCUMENTATION.docx --reference-doc=custom-reference.docx
+```
+
+---
+
+### Option B — Using Python (No extra install needed)
+
+If you already have the backend venv set up, run:
+
+```bash
+cd "c:\Prem-1\Personal Finance Tracker-Project\Post Prod\prem-expense-tracker\backend"
+venv\Scripts\activate
+pip install python-docx
+```
+
+Then run the generator script (ask Claude to regenerate `generate_doc.py` based on the current `DOCUMENTATION.md` and execute it). This produces a styled Word document with coloured headings, tables, and code blocks.
+
+---
+
+### Option C — Online (No install)
+
+1. Go to [cloudconvert.com/md-to-docx](https://cloudconvert.com/md-to-docx)
+2. Upload `DOCUMENTATION.md`
+3. Download the converted `.docx`
+
+Note: avoid uploading if the document contains sensitive details (connection strings, secret keys).
