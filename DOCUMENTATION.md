@@ -37,9 +37,13 @@
 | Statement Import | Upload bank statements as CSV, Excel (.xls/.xlsx), or PDF from HDFC, ICICI, SBI, or Paytm — auto-detects the bank and layout, deduplicates, and categorises |
 | Budgets | Set monthly spending limits per category; smart suggestions from past 3 months if no history |
 | Budget Alerts | Proactive alerts at 75%, 90%, and 100% of a category budget |
-| Analytics | Spending velocity, habit identifier, category distribution, monthly breakdown, transaction heatmap |
-| Settings | Manage categories (with icons), tags, bank accounts |
-| Auth | JWT-based registration + login; Remember Me (7-day token); Change Password from Profile; session timer in navbar; auto-logout on expiry |
+| Analytics | Spending velocity, habit identifier, category distribution, monthly breakdown, transaction heatmap, plus a Wrapped story overlay built from the same data |
+| Merchants | Map raw UPI/narration strings onto named merchants — cold-start clusters grouped by UPI handle, fuzzy-match suggestions, and a backlog rescan |
+| Subscriptions | Declared recurring bills (Bill Radar) — upcoming/overdue tracking, mark paid and undo |
+| Assistant | Read-only chat panel over the user's own data (streamed replies, navigate cards, voice input) |
+| Tag scoping | Any tag can be scoped to hide its transactions from the Dashboard, Analytics, and/or Budgets independently |
+| Settings | Manage categories (with icons), tags (incl. per-tag page exclusion), bank accounts, subscriptions, and statement upload |
+| Auth | JWT-based registration + login; Remember Me (30-day token); Change Password from Profile; session timer in navbar; auto-logout on expiry |
 
 ---
 
@@ -117,7 +121,7 @@ User action in browser
 | openpyxl / xlrd | 3.1.5 / 2.0.2 | Excel file support |
 | python-multipart | 0.0.20 | File upload (multipart form data) |
 | python-dotenv | 1.1.1 | Load `.env` file for local dev |
-| alembic | 1.16.4 | DB migrations — two migrations applied to date (`0001_content_based_unique_keys`, `0002_add_subscriptions_table`); `alembic upgrade head` is required after a fresh local DB creation |
+| alembic | 1.16.4 | DB migrations — four applied to date (`0001_content_based_unique_keys`, `0002_add_subscriptions_table`, `0003_seed_merchants_from_rules`, `0004_tag_excluded_pages`); `alembic upgrade head` is required after a fresh local DB creation |
 
 ### Frontend
 
@@ -152,7 +156,9 @@ prem-expense-tracker/               ← Monorepo root
 ├── backend/                        ← Python FastAPI application
 │   ├── requirements.txt            ← All Python dependencies
 │   ├── .env                        ← Local secrets (NOT committed to git in production)
-│   ├── alembic/versions/           ← DB migrations, applied in order (0001, 0002, 0003...)
+│   ├── alembic/versions/           ← DB migrations, applied in order (0001 … 0004)
+│   ├── tests/                      ← pytest suite (parsing, merchant matching)
+│   ├── scripts/                    ← one-off maintenance scripts (e.g. dedupe_transactions.py)
 │   └── app/
 │       ├── main.py                 ← FastAPI app entry point
 │       ├── api/                    ← Route handlers
@@ -160,19 +166,27 @@ prem-expense-tracker/               ← Monorepo root
 │       ├── schemas/                ← Pydantic request/response shapes
 │       ├── crud/                   ← Raw database operations
 │       ├── services/               ← Business logic
-│       │   └── parsing/            ← Modular CSV/Excel/PDF statement parser (see 5)
+│       │   ├── parsing/            ← Modular CSV/Excel/PDF statement parser (see 5)
+│       │   └── assistant/          ← Read-only assistant: tools, providers, prompts
 │       ├── core/                   ← Auth, config, DI
 │       └── db/                     ← DB engine and session
 │
 └── frontend/                       ← React TypeScript application
-    ├── package.json
+    ├── package.json                ← Scripts: dev, build (tsc -b && vite build), lint, preview
     ├── vite.config.ts              ← Vite config with /api proxy
-    ├── tailwind.config.js
+    ├── tailwind.config.js          ← Design tokens (colors, fonts, radii, shadows)
+    ├── postcss.config.js
+    ├── eslint.config.js
     ├── vercel.json                 ← Vercel SPA rewrite rule
+    ├── index.html                  ← Fonts, favicons, pre-paint theme script
+    ├── public/                     ← Favicons and app icons
     └── src/
         ├── api/                    ← All Axios API calls
+        ├── assets/                 ← Logo glyph
         ├── auth/                   ← Login, Register, ProtectedRoute
-        ├── components/             ← Shared UI components (Navbar, Modals)
+        ├── theme/                  ← ThemeContext (light/dark)
+        ├── components/             ← Shared UI (Navbar, MonthControl, ui/ primitives)
+        │   └── ui/                 ← Modal, LargeModal, ConfirmModal, Dropdown, DateRangePicker
         ├── Dashboard/              ← Dashboard page and sub-components
         ├── Expenses/               ← Expenses page and sub-components
         ├── Budgets/                ← Budgets page and sub-components
@@ -180,8 +194,10 @@ prem-expense-tracker/               ← Monorepo root
         ├── Merchants/              ← Merchant mapping page
         ├── Settings/               ← Settings page and sub-components
         ├── Profile/                ← Profile page
+        ├── Assistant/              ← Read-only chat panel + its open/close context
+        ├── Wrapped/                ← Wrapped story overlay (pure frontend)
         ├── types/                  ← TypeScript interfaces
-        ├── utils/                  ← Shared helpers
+        ├── utils/                  ← Shared helpers (formatter, iconHelper)
         └── App.tsx                 ← Router configuration
 ```
 
@@ -206,9 +222,15 @@ HTTP Request
 
 The single file where the FastAPI application is created. Responsibilities:
 - Creates the `FastAPI()` app instance
-- Attaches `CORSMiddleware` with a whitelist of allowed origins (Vercel URL + localhost:5173)
+- Attaches `CORSMiddleware` with a whitelist of allowed origins (Vercel URL + localhost:5173) — no wildcard
+- Registers the shared `slowapi` limiter and its `RateLimitExceeded` (429) handler, which is what makes the `@limiter.limit` decorators on the auth and assistant routes take effect
+- Adds a **security headers** middleware setting `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: no-referrer` on every response
+- Adds a **request timing** middleware that logs per-request server-side duration and returns it as `X-Response-Time-Ms`. Read-only and self-contained — it was added to separate server time from network/device time while debugging slow month navigation, and can be removed without touching anything else
+- Registers a global exception handler: the real error is logged with a generated request ID, and the client receives only `{"detail": "An internal error occurred.", "request_id": ...}`, so internals never leak
 - Mounts the main API router at prefix `/api/v1`
 - Defines the root `GET /` health-check endpoint
+
+Interactive OpenAPI docs are left at their defaults — `/docs` (Swagger UI) and `/redoc`.
 
 **CORS origins configured:**
 ```
@@ -241,10 +263,11 @@ This folder contains one file per feature domain. All routes are registered thro
 | `budget_plan_router.py` | `/budgets` | Get/save/delete monthly budget plans |
 | `dashboard_router.py` | `/dashboard` | Dashboard data endpoint |
 | `analytics_router.py` | `/analytics` | Analytics data endpoint |
-| `upload_router.py` | `/settings` | Bank statement CSV upload |
-| `test_router.py` | `/test` | DB connectivity test |
+| `subscription_router.py` | `/subscriptions` | CRUD for recurring bills, plus mark-paid / unpay |
+| `assistant_router.py` | `/assistant` | Read-only chat (SSE stream), speech-to-text, capability probe |
+| `upload_router.py` | `/settings` | Bank statement upload (CSV / Excel / PDF) |
 
-Every route except `/auth/register`, `/auth/login/password`, `/auth/login`, and `/test/test-db` requires a valid JWT via `Depends(deps.get_current_active_user)`.
+Every route except `/auth/register`, `/auth/login/password`, and `/auth/login` requires a valid JWT via `Depends(deps.get_current_active_user)`.
 
 ---
 
@@ -258,11 +281,12 @@ These Python classes map directly to database tables. SQLAlchemy uses them to ge
 | `account.py` | `accounts` | Bank account linked to user |
 | `category.py` | `categories` | Spending categories with icon support |
 | `transaction.py` | `transactions` | Core financial record |
-| `tag.py` | `tags` | Labels for transactions |
+| `tag.py` | `tags` | Labels for transactions. `excluded_pages` (array) scopes which aggregate surfaces the tag's transactions are hidden from; valid values come from the module-level `EXCLUDABLE_SURFACES` |
 | `transaction_tag.py` | `transaction_tags` | Many-to-many junction between transactions and tags |
 | `merchant.py` | `merchants` | Merchant with optional default category |
 | `goal.py` | `goals` | Monthly budget limit per category |
-| `alert.py` | `alerts` | Budget threshold notifications |
+| `alert.py` | `alerts` | Budget threshold notifications, plus `new_category` / `new_merchant` suggestions |
+| `subscription.py` | `subscriptions` | A declared recurring bill; due/overdue dates are computed at read time from `first_due_date` + `last_paid_date`, not stored |
 
 All models extend `Base` from `app/db/base_class.py`. All relationships include cascade rules so deleting a user removes all their data.
 
@@ -292,10 +316,12 @@ class ThingOut(ThingBase):       # what gets returned in responses
 | `account_schema.py` | AccountCreate, AccountUpdate, AccountOut |
 | `category_schema.py` | CategoryCreate, CategoryUpdate, CategoryOut |
 | `transaction_schema.py` | TransactionCreate, TransactionUpdate, TransactionOut |
-| `tag_schema.py` | TagCreate, TagOut |
-| `merchant_schema.py` | MerchantCreate, MerchantOut |
+| `tag_schema.py` | TagCreate, TagUpdate, TagOut — a field validator rejects any `excluded_pages` value outside `EXCLUDABLE_SURFACES` |
+| `merchant_schema.py` | MerchantCreate, MerchantUpdate, MerchantOut, UnmappedCountOut, MerchantClusterOut, RescanResultOut |
 | `goal_schema.py` | GoalCreate, GoalUpdate, GoalOut |
 | `alert_schema.py` | AlertOut |
+| `subscription_schema.py` | SubscriptionInterval (enum), SubscriptionCreate, SubscriptionUpdate, SubscriptionOut, SubscriptionMarkPaid |
+| `assistant_schema.py` | ChatMessage, ChatRequest, TranscriptionOut, AssistantHealth |
 | `budget_plan_schema.py` | BudgetPlanRequest, BudgetPlanResponse, CategoryBudgetItem |
 | `transaction_tag_schema.py` | TransactionTagCreate, TransactionTagOut |
 | `transaction_log_schema.py` | Upload response shapes |
@@ -318,11 +344,12 @@ def get_all_things(db: Session, user_id: int) -> list[Thing]:
 | `account_crud.py` | UniqueConstraint on (user_id, name) |
 | `category_crud.py` | On delete: uncategorises existing transactions |
 | `transaction_crud.py` | Smart category detection (`_get_smart_category`), triggers budget alerts on create/update |
-| `merchant_crud.py` | UniqueConstraint on (user_id, name) |
-| `tag_crud.py` | UniqueConstraint on (user_id, name) |
+| `merchant_crud.py` | UniqueConstraint on (user_id, name); unmapped count, UPI-handle clustering (carrying sample narrations, amount range and date range), backlog rescan |
+| `tag_crud.py` | UniqueConstraint on (user_id, name); `get_excluded_transaction_ids(db, user_id, surface)` — the single source of truth for tag-based exclusion, called by the dashboard, analytics, budget-plan and alert services |
 | `transaction_tag_crud.py` | Manages the junction table |
 | `goal_crud.py` | `upsert_budget_for_category` — creates or updates or deletes depending on amount |
-| `alert_crud.py` | Prevents duplicate unacknowledged alerts; creates new_category alerts |
+| `alert_crud.py` | Prevents duplicate unacknowledged alerts; creates new_category alerts; `acknowledge_all_alerts` backs the bell's "Read all" |
+| `subscription_crud.py` | CRUD plus `mark_paid` / `unpay`; `_attach_status` computes upcoming/overdue dates on read |
 
 ---
 
@@ -338,6 +365,10 @@ Services contain logic that is too complex for a single CRUD call. Routers deleg
 | `budget_plan_service.py` | Constructs the full budget plan view: pacing analysis, suggestions from history, retroactive alert creation |
 | `dashboard_service.py` | Assembles KPI metrics, spending trend data, top categories, recent transactions |
 | `analytics_service.py` | Spending velocity vs historical, habit identifier, category distribution, heatmap, monthly breakdown |
+| `merchant_matching_service.py` | Local-only merchant identification — exact UPI-handle match auto-applies, RapidFuzz similarity raises a suggestion instead. No LLM calls (raw descriptions are financial PII); used both at upload time and by `/merchants/rescan` |
+| `subscription_service.py` | Computes `upcoming_due_date` / `overdue_due_date` from the interval anchor; advances the cycle on mark-paid |
+| `transaction_log_service.py` | Shapes the filtered/paginated transaction log returned to the Expenses table |
+| `assistant/` | Read-only assistant package — `tools.py` (tool definitions; `user_id` is closed over from the JWT, never a model-supplied parameter), `providers.py` (Groq chat with NVIDIA fallback, Groq Whisper for voice), `prompts.py`, `breaker.py` |
 | `upload_service.py` | Detects duplicates by `unique_key`, applies smart categorisation, creates transactions (see `app/services/parsing/` for the actual file parsing) |
 
 ---
@@ -364,6 +395,8 @@ Turns an uploaded CSV/Excel/PDF file into a list of normalized transaction dicts
 | `config.py` | `Settings` class reads `DATABASE_URL` from environment via `pydantic-settings`. Import as `from app.core.config import settings` |
 | `security.py` | `get_password_hash()`, `verify_password()`, `create_access_token()` — all JWT and bcrypt logic. Constants: `ACCESS_TOKEN_EXPIRE_MINUTES = 60` (session), `REMEMBER_ME_EXPIRE_DAYS = 30` (Remember Me) |
 | `deps.py` | FastAPI dependency `get_current_active_user(token)` — decodes JWT, loads user from DB, raises 401 if invalid. Injected into every protected route |
+| `limiter.py` | The shared `slowapi` `Limiter` instance, in its own module so both `main.py` and routers can import it without a circular import through `main` |
+| `validators.py` | `validate_password_strength()` — one password policy enforced at every entry point (register, change password) |
 
 ---
 
@@ -405,9 +438,13 @@ Defines all routes, wrapped in `ThemeProvider` and `MonthProvider`. Every route 
 /expenses         → Expenses
 /budgets          → Budgets
 /analytics        → Analytics
+/merchants        → Merchants
 /settings         → Settings
 /profile          → ProfilePage
+*                 → redirect to /
 ```
+
+Every route below `/` renders inside `MainLayout`, which mounts the Navbar, the shared `MonthPickerModal`, and the `AssistantPanel` once for the whole app.
 
 ---
 
@@ -427,7 +464,7 @@ Defines all routes, wrapped in `ThemeProvider` and `MonthProvider`. Every route 
 
 | File | Purpose |
 |---|---|
-| `LoginPage.tsx` | Email/username + password form. **Remember Me checkbox** — checked stores 7-day token in `localStorage`; unchecked stores 60-min token in `sessionStorage`. **Forgot Password** button opens a modal explaining to contact admin for reset. Show/hide password toggle |
+| `LoginPage.tsx` | Email/username + password form. **Remember Me checkbox** — checked stores a 30-day token in `localStorage`; unchecked stores a 60-min token in `sessionStorage`. **Forgot Password** button opens a modal explaining to contact admin for reset. Show/hide password toggle |
 | `RegisterPage.tsx` | Name, email, password, confirm password. Show/hide toggle on both password fields. `PasswordStrength` component shown directly below the password field (live feedback as you type). Validates all fields before submitting |
 | `PasswordStrength.tsx` | Shows 5 password criteria (length, uppercase, lowercase, digit, special char) with live green/red checkmarks. Reused on Register and Profile pages |
 | `ProtectedRoute.tsx` | Checks `localStorage` then `sessionStorage` for `accessToken`. If missing in both → `<Navigate to="/login">` |
@@ -438,14 +475,21 @@ Defines all routes, wrapped in `ThemeProvider` and `MonthProvider`. Every route 
 
 | File | Purpose |
 |---|---|
-| `Navbar.tsx` | Top navigation bar (sticky, cream, 2px ink bottom border). Contains: logo tile + wordmark, yellow-pill nav links, a **theme toggle**, an **assistant entry button** (visual only — not yet wired to a panel), **session countdown timer** (decoded from JWT `exp`), **alert bell** (fetches unread alerts on load), avatar dropdown (profile + sign out) |
+| `Navbar.tsx` | Top navigation bar (sticky, cream, 2px ink bottom border). Contains: the lime glyph mark (`src/assets/glyph-lime.svg`) + wordmark, yellow-pill nav links, a **theme toggle**, an **assistant entry button** (wired to `useAssistant().toggle`), **session countdown timer** (decoded from JWT `exp`), **alert bell** (polls unread alerts every 60s), avatar dropdown (profile + sign out) |
 | `ui/Modal.tsx` | Base modal wrapper — centered overlay, click-outside-to-close, escape key support |
 | `ui/LargeModal.tsx` | Same as Modal but `max-w-4xl` for complex forms (e.g. budget setup) |
 | `ui/ConfirmModal.tsx` | Delete confirmation dialog with Cancel + Confirm (red) buttons |
+| `ui/Dropdown.tsx` | Themed single-select popover replacing a native `<select>` where the OS-drawn option list clashed with the app's chrome (a native element's list can't be styled past its trigger). Options may carry a colour swatch. Used on the Expenses page, not app-wide |
+| `ui/DateRangePicker.tsx` | Themed range calendar replacing the two native `<input type="date">` fields in the Expenses filters. Day grid ↔ month/year grid toggle (same interaction as `MonthPickerModal`) plus presets: This month, Last month, Last 30 days, Last 90 days |
 
-**Alert bell in Navbar:** Polls unread alerts on mount. Two alert types appear:
-- `budget` — triggered when spending crosses 75%, 90%, or 100% of a goal
-- `new_category` — triggered when the upload service encounters an unrecognised category name
+**Alert bell in Navbar:** Fetches unread alerts on mount and re-polls every 60 seconds. It renders only two of the three alert types:
+
+- `budget` — spending crossed 75%, 90%, or 100% of a goal
+- `new_category` — the upload service met an unrecognised category name
+
+`new_merchant` alerts are deliberately filtered out here (`RELEVANT_TYPES` in `Navbar.tsx`) and surfaced on the Merchants page instead — one is raised per fuzzy-matched transaction, so they are numerous enough to drown out the alerts that need attention. This also aligns the bell's unread count with the mobile app's, which only ever showed budget alerts.
+
+Each row renders the relevant category icon via `getCategoryIcon()` rather than a bare coloured disc, and the dropdown header carries a **Read all** action (`PUT /alerts/read-all`) that clears the list optimistically and restores it if the call fails.
 
 ---
 
@@ -468,7 +512,7 @@ Defines all routes, wrapped in `ThemeProvider` and `MonthProvider`. Every route 
 | File | Purpose |
 |---|---|
 | `Expenses.tsx` | Page component. Owns filter state, pagination, fetch, and CRUD handlers |
-| `components/ExpenseFilters.tsx` | Date range, account, category, type, and keyword search inputs. Calls parent `onApplyFilters` |
+| `components/ExpenseFilters.tsx` | Date range, account, category, type, and keyword search inputs — the date range uses the shared `ui/DateRangePicker`, and the select inputs use the shared `ui/Dropdown`, so no OS-drawn control appears in the filter row. Calls parent `onApplyFilters` |
 | `components/TransactionsTable.tsx` | Paginated list of transactions (10 per page). Edit + Delete actions per row |
 | `components/TransactionModal.tsx` | Add/Edit form: description, amount, type (Debit/Credit), date, category, account, multi-tag select (react-select) |
 | `components/TransactionItem.tsx` | Single transaction row rendering |
@@ -509,12 +553,12 @@ Defines all routes, wrapped in `ThemeProvider` and `MonthProvider`. Every route 
 
 ### `src/Merchants/Merchants.tsx` — Merchant Mapping
 
-Single file (no subcomponents folder, like Profile). Three things on one page:
-- **Bulk-suggestion banner**: one card per cluster from `GET /merchants/clusters` (transactions with no merchant at all yet, grouped by shared UPI handle) — raw description sample, an editable clean-name input pre-filled with a guess derived from the handle, a category picker, and "Apply to N": creates the merchant (`POST /merchants`) then links every transaction in the cluster to it (`PUT /transactions/{id}` per id).
-- **Search + list of existing merchants**: `GET /merchants?q=`, inline rename/recategorise (`PUT /merchants/{id}`) and delete (`DELETE /merchants/{id}`).
-- **"N unmapped" badge + "Rescan backlog" button**: `GET /merchants/unmapped-count` and `POST /merchants/rescan` — sweeps the existing backlog against merchants that already exist (exact handle auto-applies, fuzzy raises a `new_merchant` alert instead of showing up here).
+Single file (no subcomponents folder, like Profile). Four things on one page:
 
-The Navbar's notification dropdown renders `new_merchant` alerts the same visual way as `new_category` ones; accept composes `PUT /transactions/{id}` + `PUT /alerts/{id}/acknowledge` (no dedicated "accept" endpoint).
+- **Bulk-suggestion banner**: one card per cluster from `GET /merchants/clusters` (transactions with no merchant at all yet, grouped by shared UPI handle) — an editable clean-name input pre-filled with a guess derived from the handle, a category picker, and "Apply to N": creates the merchant (`POST /merchants`) then links every transaction in the cluster to it (`PUT /transactions/{id}` per id). Each card shows the cluster's context, not just the handle: up to three distinct untruncated raw narrations, the transaction count and total, the min–max amount range, and the first/last seen dates — a bare handle string is often not enough to recognise what the merchant is, let alone pick a category.
+- **Suggested matches**: the `new_merchant` alerts, sourced from `getUnreadAlerts()` and filtered client-side. Accept composes `PUT /transactions/{id}` + `PUT /alerts/{id}/acknowledge`; dismiss just acknowledges. There is no dedicated accept endpoint. This section used to live in the Navbar's notification dropdown and was moved here so routine, high-volume suggestions stop crowding out budget alerts.
+- **Search + list of existing merchants**: `GET /merchants?q=`, inline rename/recategorise (`PUT /merchants/{id}`) and delete (`DELETE /merchants/{id}`).
+- **"N unmapped" badge + "Rescan backlog" button**: `GET /merchants/unmapped-count` and `POST /merchants/rescan` — sweeps the existing backlog against merchants that already exist (exact handle auto-applies; a fuzzy match raises a `new_merchant` alert, which then appears in **Suggested matches** above rather than in the clusters banner).
 
 ---
 
@@ -547,9 +591,9 @@ Navigate-card clicks route via React Router and, for the `open` sheet hint: `mon
 | `Settings.tsx` | Page component. Loads categories, tags, accounts, subscriptions on mount |
 | `components/CategorySettingsCard.tsx` | Lists categories with edit/delete. Opens CategoryModal |
 | `components/CategoryModal.tsx` | Form: category name + icon picker. Supports add and edit |
-| `components/IconPicker.tsx` | Grid of 33 selectable lucide icons for categories |
-| `components/TagsCard.tsx` | Lists tags with edit/delete |
-| `components/TagModal.tsx` | Form: tag name |
+| `components/IconPicker.tsx` | Scrollable grid of the selectable lucide icons for categories — the list comes from `iconHelper`'s exported `availableIcons` (every registry key except the `default` fallback), so adding an icon to the registry adds it to the picker |
+| `components/TagsCard.tsx` | Lists tags with edit/delete, and shows which pages each tag is excluded from |
+| `components/TagModal.tsx` | Form: tag name plus a checkbox per excludable page — Dashboard (this month's totals + recent transactions), Analytics (trends, category breakdown, Wrapped), Budgets (spent/remaining, pacing, threshold alerts). Saves as `excluded_pages` |
 | `components/AccountsCard.tsx` | Lists bank accounts with edit/delete |
 | `components/AccountModal.tsx` | Form: account name, type (Savings/Current/etc.), provider (bank name) |
 | `components/SubscriptionsCard.tsx` | Lists subscriptions — name/interval/due date (red if overdue)/amount, Pay, Edit, Delete, and an always-visible Unpay icon button once `last_paid_date` is set |
@@ -573,19 +617,26 @@ Displays the current user's username and email (fetched from `GET /users/me`), a
 
 ### `src/types/index.ts` — TypeScript Interfaces
 
-All 19 data types shared across the frontend are defined here. Key ones:
+Every data type shared across the frontend is defined here. Key ones:
 
 ```typescript
 User             { id, username, email, created_at }
 Account          { id, name, type, provider, account_number }
 Category         { id, name, is_income, icon_name }
-Tag              { id, name }
+TagExcludedPage  'dashboard' | 'analytics' | 'budgets'
+Tag              { id, name, excluded_pages: TagExcludedPage[] }
 Transaction      { id, txn_date, description, amount, type, source, account_id, category_id, tags, ... }
-Alert            { id, type, threshold_percentage, context, is_acknowledged, triggered_at }
+Merchant         { id, name, category_id, user_id }
+MerchantCluster  { handle, sample_description, sample_descriptions, transaction_ids, count,
+                   total_amount, min_amount, max_amount, first_seen, last_seen }
+Alert            { id, type, threshold_percentage, context, is_acknowledged, triggered_at, goal? }
+Subscription     { id, name, amount, interval, first_due_date, last_paid_date, is_active, ... }
 DashboardData    { total_spent, percent_change, daily_average, projected_monthly, top_categories, spending_trend, recent_transactions }
 BudgetPageData   { month, budgets: CategoryBudget[], suggestions: CategoryBudget[] }
 AnalyticsData    { velocity, habit_identifier, category_distribution, monthly_breakdown, heatmap, budget_vs_spend }
 ```
+
+`TagExcludedPage` must stay in sync with `EXCLUDABLE_SURFACES` in `backend/app/models/tag.py`. `Alert.goal.category` carries `icon_name`, which is what lets the notification bell draw a real category icon.
 
 ---
 
@@ -594,7 +645,7 @@ AnalyticsData    { velocity, habit_identifier, category_distribution, monthly_br
 | File | Exports |
 |---|---|
 | `formatter.ts` | `formatCurrency(amount)` → `₹1,234.56`; `formatDate(dateStr)` → `15 Jan 2025` |
-| `iconHelper.tsx` | `getCategoryIcon(categoryName, iconName)` returns the correct lucide icon component in a bordered, pastel-tinted circle (ink icon/border on a light tint — never white-on-saturated, so contrast holds in both themes). Registry of 33 icons mapped to names like `utensils`, `car`, `shopping-bag` |
+| `iconHelper.tsx` | `getCategoryIcon(categoryName, iconName, size?)` resolves by `icon_name` first, then by keyword against the category name, then falls back to a neutral default. Returns the lucide component already wrapped in its bordered, candy-tinted badge — callers render it directly and must not wrap it again. `size` is `32` (default) or `38` to match the mobile app's row height. Also exports `availableIcons` (the registry minus the `default` key) for the Settings icon picker. The registry is kept in sync with `PFT-Mobile/src/lib/categoryVisual.ts` — same `icon_name` keys, same per-icon candy colour, same keyword-fallback order; only the rendering technique differs |
 
 ---
 
@@ -633,11 +684,16 @@ users
  │         └──── transaction_tags (transaction_id FK, tag_id FK, user_id FK)
  │                [junction table — many-to-many]
  │
- └──── tags (user_id FK)
-        id, name
-        UNIQUE(user_id, name)
-        │
-        └──── transaction_tags (tag_id FK)
+ ├──── tags (user_id FK)
+ │      id, name, excluded_pages[]
+ │      UNIQUE(user_id, name)
+ │         │
+ │         └──── transaction_tags (tag_id FK)
+ │
+ └──── subscriptions (user_id FK)
+        id, name, description, amount, interval,
+        first_due_date, last_paid_date, is_active,
+        created_at, updated_at
 ```
 
 ### Table Details
@@ -701,13 +757,17 @@ created_at   DateTime  server default = now()
 
 #### `tags`
 ```
-Column   Type     Constraints
-──────────────────────────────
-id       Integer  PK
-name     String   indexed, NOT NULL
-user_id  Integer  FK → users.id
-                  UNIQUE(user_id, name)
+Column          Type       Constraints
+────────────────────────────────────────────────────────────
+id              Integer    PK
+name            String     indexed, NOT NULL
+excluded_pages  String[]   NOT NULL, server default '{}'
+                           subset of {dashboard, analytics, budgets}
+user_id         Integer    FK → users.id
+                           UNIQUE(user_id, name)
 ```
+
+`excluded_pages` lists the aggregate surfaces this tag's transactions are hidden from. An empty array (the default) means the tag is a plain label with no exclusion behaviour. The allowed values are `EXCLUDABLE_SURFACES` in `app/models/tag.py`, enforced by a validator in `tag_schema.py` and mirrored by `TagExcludedPage` in the frontend's `types/index.ts`. Added by migration `0004_tag_excluded_pages`, which also seeds sensible defaults for two conventional tag names — see [Key Business Logic](#10-key-business-logic).
 
 #### `transaction_tags`
 ```
@@ -728,6 +788,27 @@ category_id  Integer  FK → categories.id, nullable
 user_id      Integer  FK → users.id
                       UNIQUE(user_id, name)
 ```
+
+#### `subscriptions`
+```
+Column          Type           Constraints
+──────────────────────────────────────────────────────────────
+id              Integer        PK
+user_id         Integer        FK → users.id, indexed, NOT NULL
+name            String         NOT NULL
+description     String         nullable
+amount          Numeric(12,2)  NOT NULL
+interval        String         weekly|biweekly|monthly|quarterly|yearly
+first_due_date  Date           NOT NULL — the anchor all future
+                               due dates are computed from
+last_paid_date  Date           nullable — due date of the most recent
+                               confirmed-paid cycle; drives overdue detection
+is_active       Boolean        default True (False = cancelled)
+created_at      DateTime       server default = now()
+updated_at      DateTime       server default = now(), auto-updates
+```
+
+`upcoming_due_date` and `overdue_due_date` are **not** columns — `subscription_service.py` computes them at read time from `first_due_date`, `interval`, and `last_paid_date`.
 
 #### `goals`
 ```
@@ -765,6 +846,8 @@ user_id               Integer        FK → users.id, CASCADE DELETE, indexed
 - **Cascade deletes:** Deleting a `User` cascades to all their data. Deleting a `Category` uncategorises transactions (sets `category_id = NULL`) rather than deleting them.
 - **`raw_data` JSON column:** Stores the original CSV row for each imported transaction, useful for debugging import issues.
 - **Month stored as `YYYY-MM` string:** Goals and budget plans are keyed by month string. Simple and avoids timezone issues.
+- **Tag-based exclusion is data, not code:** which transactions drop out of the dashboard, analytics, or budget totals is driven by each tag's `excluded_pages` array, resolved in one place (`tag_crud.get_excluded_transaction_ids`). No service hardcodes a tag name.
+- **Computed-on-read subscription dates:** storing a "next due date" column would drift the moment an interval or a paid date changed, so the due/overdue dates are derived on every read instead.
 
 ---
 
@@ -829,9 +912,11 @@ All endpoints are prefixed with `/api/v1`. All endpoints except auth require `Au
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/tags` | — | `TagOut[]` |
-| POST | `/tags` | `{ name }` | `TagOut` |
-| PUT | `/tags/{id}` | `{ name }` | `TagOut` |
-| DELETE | `/tags/{id}` | — | `{ message }` |
+| POST | `/tags` | `{ name, excluded_pages }` | `TagOut` — 409 if the name is already taken by this user |
+| PUT | `/tags/{id}` | `{ name, excluded_pages }` | `TagOut` — 409 on a name clash, 404 if not the user's tag |
+| DELETE | `/tags/{id}` | — | `TagOut` |
+
+`excluded_pages` is an array of `dashboard` / `analytics` / `budgets`, defaulting to `[]`. Anything else is rejected with a 422 naming the unknown value and listing the valid ones. Deleting a tag cascades to its `transaction_tags` rows, so its transactions simply stop being excluded.
 
 ### Merchants
 
@@ -842,7 +927,7 @@ All endpoints are prefixed with `/api/v1`. All endpoints except auth require `Au
 | PUT | `/merchants/{id}` | `MerchantUpdate` | `MerchantOut` — renaming/recategorising never touches transactions already linked to the merchant, only affects future matches |
 | DELETE | `/merchants/{id}` | — | `{ message }` |
 | GET | `/merchants/unmapped-count` | — | `{ count }` — transactions with `merchant_id IS NULL`; backs the notification-bell badge and the Merchants page's "N unmapped" indicator |
-| GET | `/merchants/clusters` | — | `MerchantClusterOut[]` — groups *currently-unmapped* transactions (no merchant at all) by shared UPI handle, for the cold-start bulk-naming banner |
+| GET | `/merchants/clusters` | — | `MerchantClusterOut[]` — groups *currently-unmapped* transactions (no merchant at all) by shared UPI handle, for the cold-start bulk-naming banner. Each cluster carries recognition context beyond the handle: up to 3 distinct full raw descriptions, count, total, min/max amount, and first/last seen dates |
 | POST | `/merchants/rescan` | — | `{ auto_applied, suggested }` — sweeps unmapped transactions against existing merchants using the same algorithm as upload time (exact UPI-handle match auto-applies; fuzzy match raises a `new_merchant` alert instead) |
 
 Matching (`app/services/merchant_matching_service.py`) is 100% local -- no LLM calls anywhere in this feature, since raw transaction descriptions are financial PII and a rescan sweeps the whole backlog unreviewed. Exact `name@bank` VPA handle match is high-confidence and auto-applies; otherwise RapidFuzz similarity against the merchant's known description strings (threshold calibrated against real production data) is medium-confidence and only raises a suggestion. The old hardcoded `MERCHANT_CATEGORY_RULES` dict in `upload_service.py` was retired via `alembic/versions/0003_seed_merchants_from_rules.py`, which both seeded real `Merchant` rows and backfilled matching pre-existing unmapped transactions so the new fingerprint-based matcher starts with real history to compare against.
@@ -890,6 +975,9 @@ Read-only by design — the assistant has no write tools (`app/services/assistan
 | GET | `/alerts` | `AlertOut[]` |
 | GET | `/alerts/unread` | `AlertOut[]` |
 | PUT | `/alerts/{id}/acknowledge` | `AlertOut` |
+| PUT | `/alerts/read-all` | `{ acknowledged }` — marks every unread alert read; backs the bell's "Read all" |
+
+`type` is one of `budget`, `new_category`, or `new_merchant`. The API returns all three; filtering is a client concern — the Navbar bell shows only `budget` and `new_category`, and the Merchants page shows `new_merchant`.
 
 ### Budget Plans
 
@@ -981,7 +1069,7 @@ Every API call:
 
 ### Session Timer (Navbar)
 
-The Navbar decodes the JWT in storage client-side to read the `exp` claim, then runs a `setInterval` every second to display a countdown. For Remember Me sessions (7-day token), this will show a large remaining time. When the timer hits zero, the next API call will receive a 401 and the interceptor handles logout.
+The Navbar decodes the JWT in storage client-side to read the `exp` claim, then runs a `setInterval` every second to display a countdown. For Remember Me sessions (30-day token), this will show a large remaining time. When the timer hits zero, the next API call will receive a 401 and the interceptor handles logout.
 
 ---
 
@@ -1026,7 +1114,8 @@ Triggered every time a debit transaction is created or updated.
 ```
 For each goal (budget limit) the user has for this category + month:
   Calculate total_spend = SUM of all debit transactions in that category/month
-    (excluding transactions tagged "Exclude from Analytics")
+    (excluding transactions whose tags list "budgets" in excluded_pages --
+     tag_crud.get_excluded_transaction_ids(db, user_id, "budgets"))
 
   Check thresholds in order: 100% → 90% → 75%
   For each threshold crossed:
@@ -1035,6 +1124,24 @@ For each goal (budget limit) the user has for this category + month:
 
   User sees alerts via the bell icon in the Navbar
 ```
+
+`budget_plan_service` applies the exact same `"budgets"` exclusion set when it computes budget progress, so the progress bar and the threshold alerts can never disagree about how much was spent.
+
+### Tag-Scoped Exclusion
+
+Some spend is real but shouldn't distort a total — money moved to your own other account, a reimbursed expense. Any tag can be scoped to hide its transactions from any subset of three aggregate surfaces, configured per tag in **Settings → Tags**:
+
+| Surface | What it affects |
+|---|---|
+| `dashboard` | This month's totals, spending trend, top categories, recent transactions |
+| `analytics` | Trends, category breakdown, heatmap, Wrapped |
+| `budgets` | Spent/remaining, pacing, and the 75/90/100% threshold alerts |
+
+`tag_crud.get_excluded_transaction_ids(db, user_id, surface)` resolves the tags carrying that surface into a list of transaction ids, and `dashboard_service`, `analytics_service`, `budget_plan_service` and `alert_service` each pass their own surface name. That one function replaced logic previously duplicated across all four services, each of which looked up a tag literally named `"Exclude from Analytics"`.
+
+The three surfaces are deliberately independent. A spend hidden from the charts still consumed its category's limit, so `"Exclude from Analytics"` defaults to `["dashboard", "analytics"]` and keeps counting against budgets; a transfer between your own accounts isn't category spend at all, so `"Capital Transfers"` defaults to `["dashboard", "analytics", "budgets"]`. Migration `0004_tag_excluded_pages` seeds those two defaults per user, only for rows with no scope set yet, so anyone who had already configured a scope isn't overwritten. Both are just starting points — every tag is fully editable afterwards, and the names carry no special meaning in code.
+
+On Analytics, the `include_capital_transfers` toggle switches the `analytics` exclusion set off entirely for that request, letting you see the untrimmed numbers without editing any tag.
 
 ### Statement Import (CSV / Excel / PDF)
 
@@ -1081,7 +1188,7 @@ The analytics endpoint supports these `time_period` values:
 | `all` | All historical data |
 | `YYYY-MM` | Single specific month |
 
-`include_capital_transfers=true/false` toggles whether transactions tagged "Capital Transfer" are included in the calculations.
+`include_capital_transfers=true/false` toggles the `analytics` tag-exclusion set: when true, no tag-based exclusion is applied and every transaction counts; when false (the default), transactions carrying a tag scoped to `analytics` are left out. See [Tag-Scoped Exclusion](#tag-scoped-exclusion) — the flag's name predates the feature being per-tag configurable, so it is not tied to any tag literally named "Capital Transfers".
 
 ---
 
@@ -1264,6 +1371,10 @@ Then redeploy the backend.
 |---|---|---|---|
 | `DATABASE_URL` | Yes | `postgresql+psycopg2://user:pass@host:5432/dbname` | Read by `app/db/session.py` via `os.getenv()` and also by `app/core/config.py` via pydantic-settings. **No hardcoded fallback** — the app refuses to start without it |
 | `SECRET_KEY` | Yes | `<run: python -c "import secrets; print(secrets.token_urlsafe(64))">` | Used to sign JWT tokens. Must be a long random string; use a different value in production than in dev |
+| `GROQ_API_KEY` | No | — | Assistant chat (primary provider) and voice transcription. Unset → voice unavailable and chat falls through to NVIDIA |
+| `NVIDIA_API_KEY` | No | — | Assistant chat fallback. Unset → chat is Groq-only, voice unaffected |
+
+A missing assistant key is a **degraded capability, never a boot failure** — `GET /assistant/health` reports what is actually available and the client hides the affected control. Everything else (transactions, budgets, auth) keeps serving. `app/core/config.py` also declares tunable defaults that rarely need overriding: `ASSISTANT_MODEL`, `WHISPER_MODEL`, `CHAT_PROVIDER_ORDER`, the per-provider read timeouts, and the audio/tool-round ceilings. Its `Config.extra = "ignore"` means undeclared environment variables (including `SECRET_KEY`, which `app/core/security.py` reads directly via `os.getenv`) don't raise at import.
 
 ### Frontend
 

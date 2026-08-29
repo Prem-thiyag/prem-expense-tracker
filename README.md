@@ -1,74 +1,125 @@
-# Expense-tracker
+# Prem Expense Tracker
 
-ExpenseTracker is a full-stack personal finance dashboard built to provide clear, actionable insights into your spending habits. It offers powerful tools for automated data import, in-depth analysis, and proactive budget management.
+A multi-tenant personal finance dashboard: import bank statements, categorise spending automatically, set monthly budgets, and analyse habits over time. FastAPI + PostgreSQL on the backend, React + TypeScript on the frontend. All data is scoped to the authenticated user.
 
-## Core Features
+**[DOCUMENTATION.md](DOCUMENTATION.md) is the source of truth** — architecture, full API reference, database schema, business logic, local setup, and deployment. This file is the summary.
 
-Visualize Your Finances: The application features a dynamic dashboard for monthly overviews and an advanced analytics page with tools like a Spending Velocity Chart (comparing current vs. historical spending).
+## Features
 
-Automate Your Workflow: Drastically reduce manual entry by uploading .csv bank statements. The system intelligently parses transactions, prevents duplicates, and uses smart categorization rules. Full CRUD functionality for manual transactions is also available.
+| Area | Description |
+|---|---|
+| Dashboard | Monthly KPIs (total spend, daily average, projected spend), cumulative spending trend, top-category donut, recent transactions |
+| Transactions | Full CRUD, filterable by date range / account / category / type / keyword, paginated, multi-tag |
+| Statement import | Upload CSV, Excel (`.xls`/`.xlsx`), or PDF statements from HDFC, ICICI, SBI, or Paytm. Bank and header row are auto-detected, duplicates are rejected by a content-derived key, and rows are categorised on the way in |
+| Budgets | Per-category monthly limits with pacing, plus suggestions derived from the last 3 months when there is no prior budget |
+| Budget alerts | Raised at 75%, 90%, and 100% of a category limit |
+| Analytics | Spending velocity vs. history, habit identifier, category distribution, monthly breakdown, daily heatmap, budget vs. spend |
+| Merchants | Maps raw UPI/narration strings to named merchants — unmapped transactions are clustered by UPI handle for bulk naming, fuzzy matches arrive as reviewable suggestions, and a rescan sweeps the backlog |
+| Subscriptions | Declared recurring bills with upcoming/overdue tracking and mark-paid/undo (Bill Radar) |
+| Assistant | Read-only chat panel over the user's own data, with streamed replies and voice input |
+| Tag scoping | Any tag can hide its transactions from the Dashboard, Analytics, and/or Budgets independently — configured per tag, not hardcoded by name |
+| Theming | Token-based design system driving every screen; light/dark persisted per device and applied before first paint |
+| Auth | JWT registration and login, Remember Me (30-day token), in-app password change, session countdown, auto-logout on expiry |
 
-Intelligent Budgeting & Alerts: Create monthly budgets with ease. If you're starting fresh, the app provides smart suggestions based on your past spending. Receive proactive alerts when you approach your budget limits (75%, 90%, 100%) to stay on track.
+## Tech Stack
 
-Secure & Multi-Tenant: Built from the ground up with security in mind. Features a complete JWT-based authentication system, and all data is strictly scoped to the logged-in user, ensuring your financial information remains private.
+| Backend | Frontend |
+|---|---|
+| Python 3.11 | React 19 + TypeScript 5.8 |
+| FastAPI + Uvicorn | Vite 7 |
+| SQLAlchemy 2 (ORM) | Tailwind CSS 3 |
+| PostgreSQL | Axios |
+| Alembic (migrations) | Recharts |
+| Pydantic / pydantic-settings | react-router-dom 7 |
+| python-jose + passlib/bcrypt (JWT, hashing) | lucide-react, react-select |
+| Pandas, openpyxl, xlrd (CSV/Excel) | dayjs, react-hot-toast |
+| pdfplumber (PDF statements) | html2canvas |
+| RapidFuzz / thefuzz (fuzzy matching) | |
+| slowapi (rate limiting) | |
 
-Themeable by Design: A token-based design system (light/dark mode, persisted per device) drives every screen from one shared set of colors, type, radii, and shadows.
+Assistant chat runs on Groq with an NVIDIA fallback; voice transcription is Groq Whisper. Both keys are optional — a missing key degrades that one capability rather than failing startup.
 
-## Tech Stack & Deployment
+## Deployment
 
-This application is deployed across a modern cloud infrastructure, ensuring scalability and performance.
+| Layer | Host |
+|---|---|
+| Frontend | Vercel |
+| Backend | Render (Docker, `Dockerfile.backend`) |
+| Database | Supabase (PostgreSQL) |
 
-Frontend: Hosted on Vercel
+In local development the Vite dev server proxies `/api` to `http://localhost:8000`, so the backend URL is never exposed to the browser and there are no CORS issues.
 
-Backend: Hosted on Render
+## Project Structure
 
-Database: Hosted on Supabase (PostgreSQL)
+A monorepo holding the backend and frontend.
 
-| Backend                 | Frontend             |
-| ----------------------- | -------------------- |
-| Python                  | React & TypeScript   |
-| FastAPI                 | Vite                 |
-| SQLAlchemy (ORM)        | Tailwind CSS         |
-| PostgreSQL              | Axios                |
-| Pydantic                | Recharts             |
-| Passlib & python-jose   | react-router-dom     |
-| Pandas                  |                      |
-
-## 📁 Project Structure
-
-
-
-The project is a monorepo containing the backend and frontend, organized for clarity and maintainability.
-
-```prem-kapil-expense-tracker/
-├── backend/
-│   ├── app/
-│   │   ├── api/          # API Endpoints (Routers)
-│   │   ├── core/         # Security, Dependencies
-│   │   ├── crud/         # Database Functions
-│   │   ├── models/       # SQLAlchemy DB Models
-│   │   ├── schemas/      # Pydantic Validation Schemas
-│   │   └── services/     # Business Logic
-│   └── main.py           # App Entrypoint
+```
+prem-expense-tracker/
+├── backend/                        # FastAPI application
+│   ├── alembic/versions/           # DB migrations (0001 … 0004)
+│   ├── tests/                      # pytest suite (parsing, merchant matching)
+│   ├── scripts/                    # One-off maintenance scripts
+│   ├── requirements.txt
+│   └── app/
+│       ├── main.py                 # App entrypoint, CORS, security headers, rate limiting
+│       ├── api/                    # Route handlers (one file per domain)
+│       ├── core/                   # Config, JWT/hashing, DI, rate limiter, validators
+│       ├── crud/                   # Database operations, all user-scoped
+│       ├── models/                 # SQLAlchemy ORM models
+│       ├── schemas/                # Pydantic request/response schemas
+│       └── services/               # Business logic
+│           ├── parsing/            # CSV/Excel/PDF statement parsers
+│           └── assistant/          # Read-only assistant: tools, providers, prompts
 │
-├── frontend/
+├── frontend/                       # React + TypeScript SPA
+│   ├── vite.config.ts              # Vite config with the /api proxy
+│   ├── tailwind.config.js          # Design tokens
+│   ├── vercel.json                 # SPA rewrite rule
 │   └── src/
-│       ├── api/          # Central API Client (Axios)
-│       ├── auth/         # Login, Register Components
-│       ├── components/   # Shared UI (Modals, Navbar)
-│       ├── Dashboard/    # Dashboard Feature Module
-│       ├── Analytics/    # Analytics Feature Module
-│       ├── types/        # TypeScript Definitions
-│       ├── App.tsx       # Main Component & Routing
-│       └── vite.config.ts # Vite & Proxy Configuration
+│       ├── api/                    # Central Axios client — the only file making HTTP calls
+│       ├── auth/                   # Login, Register, ProtectedRoute
+│       ├── theme/                  # Light/dark context
+│       ├── components/             # Navbar, month control, ui/ primitives
+│       ├── Dashboard/  Expenses/  Budgets/  Analytics/
+│       ├── Merchants/  Settings/  Profile/
+│       ├── Assistant/              # Chat panel
+│       ├── Wrapped/                # Story overlay
+│       ├── types/                  # TypeScript interfaces
+│       ├── utils/                  # Formatters, category icon registry
+│       └── App.tsx                 # Routing
 │
-└── README.md
+├── DOCUMENTATION.md
+└── Dockerfile.backend
 ```
 
-## Security 
+## Local Development
 
-Password Security: Passwords are never stored in plain text. We use bcrypt for secure, one-way hashing.
+```bash
+# Backend
+cd backend
+python -m venv venv
+venv\Scripts\activate                    # macOS/Linux: source venv/bin/activate
+pip install -r requirements.txt
+# Set DATABASE_URL and SECRET_KEY in backend/.env
+alembic upgrade head
+uvicorn app.main:app --reload            # http://localhost:8000
 
-Authentication: User sessions are managed with JSON Web Tokens (JWT), which are required for all protected API endpoints.
+# Frontend
+cd frontend
+npm install
+npm run dev                              # http://localhost:5173
+```
 
-Data Isolation: All database queries are strictly scoped to the authenticated user, preventing any possibility of cross-user data access.
+`DATABASE_URL` has no hardcoded fallback — the app refuses to start without it. `alembic upgrade head` is required after creating a fresh database. Interactive API docs are served at `http://localhost:8000/docs`.
+
+See [DOCUMENTATION.md](DOCUMENTATION.md) for the full setup, including the local vs. Supabase database options and the complete environment variable reference.
+
+## Security
+
+- **Password storage** — bcrypt one-way hashing; plaintext is never stored. One strength policy (`app/core/validators.py`) is enforced at every entry point.
+- **Authentication** — JWT bearer tokens on every protected endpoint, verified by a single FastAPI dependency.
+- **Data isolation** — every query filters on `user_id`, so cross-user access is not reachable through the API.
+- **Transport and headers** — CORS is restricted to an explicit origin list (no wildcard); responses carry `X-Content-Type-Options`, `X-Frame-Options`, and `Referrer-Policy`.
+- **Rate limiting** — slowapi caps the auth endpoints (registration and password operations at 5/hour, login at 5/minute) and the assistant's chat and transcribe endpoints, keyed per user.
+- **Error handling** — unhandled exceptions are logged with a request ID and returned as a generic message, so internals never leak to the client.
+- **Assistant** — read-only by construction: it has no write tools, and `user_id` is closed over from the JWT rather than being a model-supplied parameter. Merchant matching is entirely local, with no third-party calls, because raw transaction descriptions are financial PII.
